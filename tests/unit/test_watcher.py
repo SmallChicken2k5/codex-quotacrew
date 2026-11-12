@@ -425,6 +425,49 @@ async def test_settings_event_wakes_monitor_without_waiting_old_interval(migrate
         await asyncio.wait_for(task, 2)
 
 
+async def test_warmup_waits_for_queued_continuation(migrated_db):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from codex_account_manager.continuity.automation import ContinuationTicket
+    from codex_account_manager.storage.repositories import SettingsRepository
+
+    await SettingsRepository().set("warmup_mode", "reset")
+    continuity = _FakeContinuity()
+    automation = continuity.automation
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def continue_work(_ticket):
+        started.set()
+        await finish.wait()
+
+    automation.run = AsyncMock(side_effect=continue_work)
+    automation.recover_pending.side_effect = lambda _owner: automation.launch_batch(
+        [ContinuationTicket("thread", "turn", desktop=True)]
+    )
+    watcher = Watcher(
+        accounts=_StubAccounts([_health("ready", active=True)]), continuity=continuity
+    )
+    warmed = asyncio.Event()
+    watcher.warmup.run = AsyncMock(side_effect=lambda *_args: warmed.set())
+    task = asyncio.create_task(watcher.run())
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        watcher.warmup.run.assert_not_awaited()
+        automation.recover_pending.side_effect = None
+        finish.set()
+        await asyncio.wait_for(asyncio.gather(*tuple(automation.tasks)), 2)
+        bus.publish("monitor.refresh_requested")
+        await asyncio.wait_for(warmed.wait(), 2)
+        watcher.warmup.run.assert_awaited_once()
+    finally:
+        finish.set()
+        watcher.stop()
+        await asyncio.wait_for(task, 2)
+        await automation.stop()
+
+
 async def test_busy_health_automatically_recovers_before_normal_poll(migrated_db):
     import asyncio
 

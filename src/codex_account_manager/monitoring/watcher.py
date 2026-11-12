@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 
 from codex_account_manager.accounts.service import AccountService
 from codex_account_manager.continuity.policy import (
@@ -24,6 +25,7 @@ from codex_account_manager.monitoring.settings import (
     DEFAULT_POLICY,
     poll_interval,
 )
+from codex_account_manager.monitoring.warmup import Warmup, scheduled_poll_delay
 
 log = get_logger(__name__)
 
@@ -39,6 +41,7 @@ class Watcher:
     ):
         self.accounts = accounts or AccountService()
         self.continuity = continuity or ContinuityService(accounts=self.accounts)
+        self.warmup = Warmup(self.accounts)
         self.policy = policy or resolve_policy(DEFAULT_POLICY)
         self._load_policy = policy is None
         self.poll_seconds = poll_interval(poll_seconds)
@@ -235,30 +238,48 @@ class Watcher:
                 started = time.monotonic()
                 retry_delay = None
                 enabled = False
+                warmup_delay = None
                 try:
                     from codex_account_manager.storage.repositories import SettingsRepository
 
-                    enabled = await SettingsRepository().get("monitor_enabled", "true") == "true"
+                    settings = await SettingsRepository().all()
+                    enabled = settings.get("monitor_enabled", "true") == "true"
                     bus.publish("monitor.status", enabled=enabled)
                     requested = self._manual_refresh
                     self._manual_refresh = False
                     if not enabled:
                         self.continuity._turn_baselines.clear()
                         await self.continuity.automation.stop(clear_pending=True)
-                    await self.poll_once(allow_switch=enabled, track_work=enabled or requested)
+                    now = datetime.now()
+                    health = await self.poll_once(
+                        allow_switch=enabled, track_work=enabled or requested
+                    )
+                    warmup_mode = settings.get("warmup_mode", "off")
+                    continuations = self.continuity.automation
+                    # Recovery queues its worker before it acquires the account lock.
+                    if (
+                        enabled
+                        and warmup_mode in {"reset", "scheduled"}
+                        and not continuations.tasks
+                        and not continuations.goal_observer.tasks
+                    ):
+                        await self.warmup.run(health, now)
+                    if enabled and warmup_mode == "scheduled":
+                        warmup_delay = scheduled_poll_delay(
+                            settings.get("warmup_times", ""), datetime.now()
+                        )
                 except OperationBusyError:
                     retry_delay = 2.0
                     log.debug("Account refresh deferred until the current operation completes.")
                 except Exception:
                     log.exception("Watcher poll failed.")
                 try:
+                    next_poll = max(1.0, self.poll_seconds - (time.monotonic() - started))
+                    if warmup_delay is not None:
+                        next_poll = min(next_poll, warmup_delay)
                     await asyncio.wait_for(
                         self._wake.wait(),
-                        timeout=(
-                            retry_delay
-                            if retry_delay is not None
-                            else max(1.0, self.poll_seconds - (time.monotonic() - started))
-                        ),
+                        timeout=(retry_delay if retry_delay is not None else next_poll),
                     )
                 except TimeoutError:
                     pass

@@ -23,7 +23,6 @@ from codex_account_manager.gui.i18n import (
 )
 from codex_account_manager.gui.view_base import BaseView, view_header
 from codex_account_manager.gui.widgets import label
-from codex_account_manager.updates import REPOSITORY
 
 
 class AboutView(BaseView):
@@ -50,9 +49,9 @@ class AboutView(BaseView):
         buttons.addWidget(label(tr("Support the project"), "H2"), 0, 0, 1, 2)
         for index, (title, url) in enumerate(
             (
-                ("Star on GitHub", f"https://github.com/{REPOSITORY}"),
-                ("Report an issue", f"https://github.com/{REPOSITORY}/issues"),
-                ("Contribute a pull request", f"https://github.com/{REPOSITORY}/pulls"),
+                ("Star on GitHub", "https://github.com/erkanpulat/codex-quotacrew"),
+                ("Report an issue", "https://github.com/erkanpulat/codex-quotacrew/issues"),
+                ("Contribute a pull request", "https://github.com/erkanpulat/codex-quotacrew/pulls"),
                 ("Developer profile", "https://github.com/erkanpulat"),
             )
         ):

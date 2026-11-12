@@ -1,4 +1,4 @@
-"""Update preferences, release availability and explicit installation."""
+"""Update preferences, release availability and verified installation."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class UpdatesPanel(QWidget):
             tr(
                 "Updates for this installation are managed by Microsoft Store."
                 if self._packaged
-                else "Check GitHub once a day. Download and installation start only when you choose Update."
+                else "Check the fork once a day. Install verified updates when QuotaCrew can restart."
             ),
             self.automatic,
         )
@@ -64,7 +64,7 @@ class UpdatesPanel(QWidget):
         self.check.clicked.connect(lambda: self.check_now())
         self.install = QPushButton(tr("Update"))
         self.install.setObjectName("Primary")
-        self.install.clicked.connect(self._update)
+        self.install.clicked.connect(lambda: self._update())
         self.install.hide()
         self.notes = QPushButton(tr("Release notes"))
         self.notes.clicked.connect(self._open_release)
@@ -118,6 +118,9 @@ class UpdatesPanel(QWidget):
     def _scheduled_check(self):
         if self._busy or not self.automatic.isChecked():
             return
+        if self.release is not None and updates.installed_directory() is not None:
+            self._update(automatic=True)
+            return
 
         def loaded(value):
             try:
@@ -125,7 +128,7 @@ class UpdatesPanel(QWidget):
             except (TypeError, ValueError):
                 due = True
             if due and self.automatic.isChecked():
-                self.check_now()
+                self.check_now(automatic=True)
 
         self.runner.submit(SettingsRepository().get("update_checked_at"), loaded)
 
@@ -135,7 +138,7 @@ class UpdatesPanel(QWidget):
         self.check.setEnabled(not busy)
         self.install.setEnabled(not busy)
 
-    def check_now(self):
+    def check_now(self, *, automatic=False):
         if self._packaged:
             QDesktopServices.openUrl(QUrl(package.STORE_UPDATES_URI))
             return
@@ -143,9 +146,13 @@ class UpdatesPanel(QWidget):
             return
         self._working(True)
         self.status.setText(tr("Checking for updates…"))
-        self.runner.submit(asyncio.to_thread(updates.latest_release), self._checked, self._failed)
+        self.runner.submit(
+            asyncio.to_thread(updates.latest_release),
+            lambda release: self._checked(release, automatic=automatic),
+            self._failed,
+        )
 
-    def _checked(self, release):
+    def _checked(self, release, *, automatic=False):
         self._working(False)
         self.release = release
         self.installer = None
@@ -157,6 +164,8 @@ class UpdatesPanel(QWidget):
             )
             self.status.setText(tr("Version {version} is available.", version=release.version))
             self.available.emit(release.version)
+            if automatic and self.automatic.isChecked() and updates.installed_directory():
+                self._update(automatic=True)
         else:
             self.status.setText(tr("No newer stable version is available."))
             self.available.emit("")
@@ -164,7 +173,7 @@ class UpdatesPanel(QWidget):
     def _open_release(self):
         QDesktopServices.openUrl(QUrl(self.release.url if self.release else updates.RELEASES_URL))
 
-    def _update(self):
+    def _update(self, *, automatic=False):
         if self._packaged:
             self.check_now()
             return
@@ -180,16 +189,23 @@ class UpdatesPanel(QWidget):
             return
         self._working(True)
         if self.installer is not None:
-            self._downloaded(self.installer)
+            self._downloaded(self.installer, automatic=automatic)
         else:
             self.status.setText(tr("Downloading and verifying the update…"))
-            self.runner.submit(updates.download(self.release), self._downloaded, self._failed)
+            self.runner.submit(
+                updates.download(self.release),
+                lambda installer: self._downloaded(installer, automatic=automatic),
+                self._failed,
+            )
 
-    def _downloaded(self, installer):
+    def _downloaded(self, installer, *, automatic=False):
         if self.release is None:
             self._failed(RuntimeError("Check for a newer stable release."))
             return
         self.installer = installer
+        if automatic and not self.automatic.isChecked():
+            self._working(False)
+            return
         if not self.can_restart():
             self._failed(
                 RuntimeError(

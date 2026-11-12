@@ -720,6 +720,24 @@ class CodexAppServer:
             tokens_used=goal.get("tokensUsed", 0),
         )
 
+    async def completed_goal(self, thread_id: str, turn_id: str) -> GoalInfo | None:
+        """Read completion evidence after Codex removes its current goal row."""
+        from codex_account_manager.codex.goal_history import read_completed_goal
+
+        result = await self._request_with_discovery_retry(
+            "thread/read", {"threadId": thread_id, "includeTurns": False}
+        )
+        thread = result.get("thread") if isinstance(result, dict) else None
+        if (
+            not isinstance(thread, dict)
+            or thread.get("id") != thread_id
+            or not isinstance(thread.get("path"), str)
+        ):
+            return None
+        return await asyncio.to_thread(
+            read_completed_goal, thread["path"], Path(self.codex_home), thread_id, turn_id
+        )
+
     async def set_goal(self, thread_id: str, objective: str) -> GoalInfo:
         result = await self._request(
             "thread/goal/set", {"threadId": thread_id, "objective": objective}
@@ -866,6 +884,56 @@ class CodexAppServer:
             or current.tokens_used < previous.tokens_used
         ):
             raise AppServerError("Could not verify the goal after restoring its active status.")
+
+    async def run_warmup_turn(self, cwd: str) -> bool:
+        if self._turn_events is not None:
+            raise AppServerError("Another turn is already running on this connection.")
+        events: asyncio.Queue[dict] = asyncio.Queue(maxsize=16)
+        self._turn_events = events
+        try:
+            result = await self._request(
+                "thread/start",
+                {
+                    "cwd": cwd,
+                    "ephemeral": True,
+                    "approvalPolicy": "never",
+                    "sandbox": "read-only",
+                    "config": {
+                        "model_provider": "openai",
+                        "web_search": "disabled",
+                        "mcp_servers": {},
+                        "features": {"shell_tool": False, "hooks": False},
+                    },
+                },
+            )
+            thread = result.get("thread") or {}
+            thread_id = thread.get("id")
+            if (
+                thread.get("ephemeral") is not True
+                or not isinstance(thread_id, str)
+                or not thread_id
+            ):
+                raise AppServerError("Codex did not confirm a temporary warm-up conversation.")
+            result = await self._request(
+                "turn/start",
+                {
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": "Reply with only OK. Do not use tools."}],
+                },
+            )
+            turn = self._turn_summary(result.get("turn"))
+            turn_id = turn.get("id")
+            if not isinstance(turn_id, str) or not turn_id:
+                raise AppServerError("Codex did not confirm a warm-up turn.")
+            while normalize_turn_status(turn.get("status")) == "inProgress":
+                event = await events.get()
+                if event.get("closed") or event.get("request"):
+                    return False
+                if event.get("threadId") == thread_id and event["turn"].get("id") == turn_id:
+                    turn = event["turn"]
+            return normalize_turn_status(turn.get("status")) == "completed"
+        finally:
+            self._turn_events = None
 
     async def run_continuation_turn(
         self,

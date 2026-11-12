@@ -30,7 +30,9 @@ Goal opening sends no message. If a new turn is already running, QuotaCrew obser
 
 After opening a goal, an independent observer checks lightweight Desktop activity for up to 60 seconds. It releases the account lock between checks and does not hold up other conversations. After at least ten seconds it may open the conversation one more time, only after rechecking the same account, available capacity, unchanged eligible goal and quota turn, and idle Desktop state. The deadline and second-opening claim survive application restarts. No resumed work after that window requires a manual check; the conversation is not opened indefinitely. Manual switching or stopping continuation cancels these observers. Conditional shutdown waits while goal activation is pending.
 
-Manually handed off active goals receive only one opening followed by the same bounded observation. A second opening could override a user stop when the turn identity stays unchanged, so it is disabled for these intents. A successful account switch remains committed even if an individual continuation fails; QuotaCrew does not send a fallback prompt or restart Desktop because of that failure.
+For a verified quota interruption, if the same failed turn and active goal are still idle after reopening, QuotaCrew can send one continuation request starting 30 seconds after the first opening. It records the attempt before sending, then checks for a new turn. The request can use quota, and uncertain delivery requires manual review.
+
+Manually handed off active goals receive one opening followed by bounded observation. A second opening or a continuation request could override a user stop when the turn identity stays unchanged. A successful account switch remains committed if an individual continuation fails.
 
 Unsent requests can wait for a connection for up to ten minutes. An uncertain submission is not resent automatically. Pausing or clearing tracking cancels waiting requests; account information continues refreshing. Historical failures found on the first observation are not automatically revived.
 

@@ -21,7 +21,7 @@ def run_windows_powershell(command, script):
             "-Command",
             command,
         ],
-        env={**os.environ, "TEST_BOOTSTRAP_SCRIPT": str(script), "TEST_PYTHON": sys.executable},
+        env={**os.environ, "TEST_BOOTSTRAP_SCRIPT": str(script)},
         capture_output=True,
         text=True,
         # Parsing/interpreter selection is independent of cold PowerShell startup.
@@ -48,12 +48,14 @@ def test_bootstrap_tries_next_interpreter_after_launcher_stderr(tmp_path):
     result = run_windows_powershell(
         r"""function py {
             if ($args[0] -eq "-3.13") {
-                & $env:TEST_PYTHON -c "import sys; sys.stderr.write('Interpreter unavailable'); sys.exit(103)"
+                # Model the launcher's stderr and caller-visible exit status directly.
+                $global:LASTEXITCODE = 103
+                Write-Error 'Interpreter unavailable'
                 return
             }
             if ($args[0] -ne "-3.12") { throw "Unexpected interpreter choice" }
             if ($args[1] -eq "-c") {
-                & $env:TEST_PYTHON -c "pass"
+                $global:LASTEXITCODE = 0
                 return
             }
             if ($args[1] -eq "-m" -and $args[2] -eq "venv") {

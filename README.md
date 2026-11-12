@@ -87,7 +87,7 @@ GitHub release packages are not code-signed. `SHA256SUMS.txt` contains their fil
 
 ## Continuation flow
 
-With monitoring and the relevant continuation option enabled, QuotaCrew detects a quota-interrupted task and checks the destination account. After switching, it opens eligible Desktop goal conversations once, without an extra message. Other supported conversations receive a continuation request. Jobs tracks whether a new turn actually starts.
+With monitoring and the relevant continuation option enabled, QuotaCrew detects a quota-interrupted task and checks the destination account. After switching, it opens eligible Desktop goal conversations. If an unchanged goal is still idle after reopening, QuotaCrew can send one continuation request. Other supported conversations receive a continuation request directly. Jobs tracks whether a new turn actually starts.
 
 ![QuotaCrew continuation: check the limit, switch accounts, send a request in the same conversation and track the result](docs/images/continuation-flow-en.svg)
 

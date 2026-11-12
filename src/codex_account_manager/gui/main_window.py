@@ -866,6 +866,10 @@ class MainWindow(QMainWindow):
                 self.power_view.controls.invalidate()
             self.dashboard._render(event.payload["health"])
             self.accounts_view._render(event.payload["health"])
+        elif event.topic == "warmup.finished":
+            self.statusBar().showMessage(
+                tr("Warm-up: {completed} completed, {failed} failed.", **event.payload), 6000
+            )
         elif event.topic == "switch.suggested":
             self._switch(event.payload["target"], follow_latest=True)
         elif event.topic == "switch.failed" and "alias" not in event.payload:

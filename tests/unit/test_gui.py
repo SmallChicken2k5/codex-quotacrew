@@ -155,6 +155,34 @@ def test_update_availability_opens_shared_settings_tab(window, monkeypatch):
     assert window.update_button.isHidden() and panel.install.isHidden()
 
 
+def test_fork_auto_update_respects_opt_out_and_retries_when_idle(window, monkeypatch):
+    from pathlib import Path
+    from unittest.mock import Mock
+
+    from codex_account_manager import updates
+    from tests.unit.test_updates import metadata
+
+    monkeypatch.setattr(updates, "installed_directory", lambda: Path("C:/app"))
+    panel = window.updates
+    panel.automatic.setChecked(True)
+    install = Mock()
+    monkeypatch.setattr(panel, "_update", install)
+    release = updates.parse_release(metadata())
+    panel._checked(release, automatic=True)
+    install.assert_called_once_with(automatic=True)
+
+    panel.automatic.setChecked(False)
+    install.reset_mock()
+    panel._downloaded(Path("C:/app/installer.exe"), automatic=True)
+    panel._scheduled_check()
+    assert not panel.preparing
+    install.assert_not_called()
+
+    panel.automatic.setChecked(True)
+    panel._scheduled_check()
+    install.assert_called_once_with(automatic=True)
+
+
 def test_update_errors_restore_controls_and_shutdown_plan_blocks_install(window, monkeypatch):
     from unittest.mock import Mock
 

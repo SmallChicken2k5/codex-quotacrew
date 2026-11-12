@@ -559,9 +559,11 @@ async def test_completed_work_waits_for_pending_independent_continuation(
 
 
 @pytest.mark.parametrize("mode", ["work", "limits"])
-@pytest.mark.parametrize("manual_goal", [False, True])
+@pytest.mark.parametrize(
+    ("manual_goal", "fallback_attempted"), [(False, False), (True, False), (False, True)]
+)
 async def test_pending_goal_activation_blocks_conditional_shutdown(
-    migrated_db, monkeypatch, mode, manual_goal
+    migrated_db, monkeypatch, mode, manual_goal, fallback_attempted
 ):
     from unittest.mock import AsyncMock
 
@@ -594,6 +596,8 @@ async def test_pending_goal_activation_blocks_conditional_shutdown(
     owner = ContinuationSupervisor()
     await owner._claim(ticket)
     await owner.goal_observer.opened(ticket)
+    if fallback_attempted:
+        await owner._record(ticket, "goal_fallback_attempted")
     target = PowerTarget(mode, "thread", None, "original") if mode == "work" else PowerTarget(mode)
     evidence = await checks.check(target)
     assert not evidence.ready and evidence.reason == "Waiting for {count} goals to resume."
@@ -750,6 +754,7 @@ async def test_shutdown_explains_selected_goal_state(migrated_db, monkeypatch, s
     server = ExecutionServer()
     server.list_threads = AsyncMock(return_value=[_thread("thread", 1)])
     server.get_goal = AsyncMock(return_value=goal)
+    server.completed_goal = AsyncMock(return_value=None)
     monkeypatch.setattr(power, "CodexAppServer", lambda *_a, **_k: server)
     checks = power.PowerChecks(AsyncMock())
     checks._turn = AsyncMock(return_value={"id": "turn", "status": "completed"})
@@ -802,3 +807,39 @@ async def test_limits_shutdown_explains_missing_profile_owner(migrated_db, monke
     assert not result.ready
     assert result.values == {"count": 1}
     assert "owner" in result.reason
+
+
+@pytest.mark.parametrize("completion", ["matching", "changed", "budget_changed", "unverified"])
+async def test_missing_selected_goal_requires_matching_history_completion(
+    migrated_db, monkeypatch, completion
+):
+    from unittest.mock import AsyncMock
+
+    from codex_account_manager.monitoring import power
+    from tests.fakes import ExecutionServer
+    from tests.integration.test_limit_continuation import _thread
+
+    original = GoalInfo("thread", "Finish the task", "active", True, 500, 1)
+    recovered = replace(original, status="complete", tokens_used=42)
+    if completion == "changed":
+        recovered = replace(recovered, objective="Different work")
+    elif completion == "budget_changed":
+        recovered = replace(recovered, token_budget=600)
+    elif completion == "unverified":
+        recovered = None
+    server = ExecutionServer()
+    server.list_threads = AsyncMock(return_value=[_thread("thread", 1)])
+    server.get_goal = AsyncMock(return_value=GoalInfo("thread", None, None, False))
+    server.completed_goal = AsyncMock(return_value=recovered)
+    monkeypatch.setattr(power, "CodexAppServer", lambda *_a, **_k: server)
+    checks = power.PowerChecks(AsyncMock())
+    checks._turn = AsyncMock(return_value={"id": "final-turn", "status": "completed"})
+    target = PowerTarget("work", "thread", goal_signature(original), "initial-turn")
+    evidence = await checks.check(target)
+    assert evidence.ready is (completion == "matching")
+    server.completed_goal.assert_awaited_once_with("thread", "final-turn")
+    if evidence.ready:
+        plan = ShutdownPlan()
+        plan.arm(target)
+        plan.observe(evidence, 0)
+        assert plan.remaining(0) == 120

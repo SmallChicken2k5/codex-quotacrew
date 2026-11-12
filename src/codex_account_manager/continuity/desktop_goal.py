@@ -1,4 +1,4 @@
-"""Bounded goal activation observation; no messages or Desktop restarts."""
+"""Observe goal activation and recover a stalled quota-driven Desktop handoff."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 OBSERVATION_SECONDS = 60.0
 REOPEN_AFTER_SECONDS = 10.0
+FALLBACK_AFTER_SECONDS = 30.0
 POLL_SECONDS = 3.0
 log = get_logger(__name__)
 
@@ -48,7 +49,7 @@ class DesktopGoalObserver:
                       ON pending.thread_id=attempt.thread_id AND pending.turn_id=attempt.source_turn_id
                     WHERE attempt.thread_id=? AND attempt.source_turn_id=?
                       AND pending.owner_key=? AND pending.goal_signature=?
-                      AND attempt.status IN ('goal_opened', 'goal_reopened')""",
+                      AND attempt.status IN ('goal_opened', 'goal_reopened', 'goal_fallback_attempted')""",
                     (ticket.thread_id, ticket.turn_id, ticket.owner_key, ticket.goal_signature),
                 )
             ).fetchone()
@@ -131,13 +132,16 @@ class DesktopGoalObserver:
     async def _finish(self, ticket: ContinuationTicket, status: str, event: str) -> None:
         async with connect() as db:
             updated = await db.execute(
-                "UPDATE continuation_attempts SET status=? WHERE thread_id=? AND source_turn_id=? "
-                "AND status IN ('goal_opened','goal_reopened') "
+                "UPDATE continuation_attempts SET status=CASE "
+                "WHEN status='goal_fallback_attempted' AND ? <> 'goal_resumed' "
+                "THEN 'uncertain' ELSE ? END WHERE thread_id=? AND source_turn_id=? "
+                "AND status IN ('goal_opened','goal_reopened','goal_fallback_attempted') "
                 "AND EXISTS (SELECT 1 FROM pending_continuations AS pending "
                 "WHERE pending.thread_id=continuation_attempts.thread_id "
                 "AND pending.turn_id=continuation_attempts.source_turn_id "
                 "AND pending.owner_key=? AND pending.goal_signature=?)",
                 (
+                    status,
                     status,
                     ticket.thread_id,
                     ticket.turn_id,
@@ -155,7 +159,9 @@ class DesktopGoalObserver:
         await self.owner.report(ticket.thread_id, event, "goal_activation")
         bus.publish("work.observed")
 
-    async def _probe(self, ticket: ContinuationTicket, *, reopen: bool) -> str:
+    async def _probe(
+        self, ticket: ContinuationTicket, *, reopen: bool, fallback: bool = False
+    ) -> str:
         from codex_account_manager.continuity.automation import (
             goal_allows_continuation,
             matches_desktop_interruption,
@@ -197,6 +203,10 @@ class DesktopGoalObserver:
                 turn = await adapter.latest_turn(ticket.thread_id)
                 activity = await owner.native.thread_status(ticket.thread_id)
                 if activity == "active":
+                    if not ticket.resume_active_goal and (
+                        not turn or turn.get("id") == ticket.turn_id
+                    ):
+                        return "waiting"
                     if ticket.resume_active_goal and turn and turn.get("id") == ticket.turn_id:
                         turn = {**turn, "status": "inProgress"}
                     if (
@@ -221,7 +231,7 @@ class DesktopGoalObserver:
                 if not matches_desktop_interruption(ticket, turn, goal):
                     return "stopped"
                 if (
-                    reopen
+                    (reopen or fallback)
                     and not ticket.resume_active_goal
                     and activity == "idle"
                     and account.ordinary_usage_allowed is True
@@ -235,20 +245,33 @@ class DesktopGoalObserver:
                         or not await owner._local_allows(ticket.thread_id)
                         or not await owner.enabled()
                         or not await owner.desktop_enabled()
+                        or await SettingsRepository().get("monitor_enabled", "true") != "true"
                     ):
                         return "stopped"
+                    if fallback:
+                        # The failed quota turn must still be the latest, and the
+                        # Desktop thread must still be idle before claiming delivery.
+                        current = await adapter.latest_turn(ticket.thread_id)
+                        if not matches_desktop_interruption(ticket, current, final_goal):
+                            return "stopped"
+                        if await owner.native.thread_status(ticket.thread_id) != "idle":
+                            return "waiting"
+                    expected = "goal_reopened" if fallback else "goal_opened"
+                    next_status = "goal_fallback_attempted" if fallback else "goal_reopened"
                     async with connect() as db:
                         claimed = await db.execute(
-                            "UPDATE continuation_attempts SET status='goal_reopened' "
-                            "WHERE thread_id=? AND source_turn_id=? AND status='goal_opened' "
+                            "UPDATE continuation_attempts SET status=? "
+                            "WHERE thread_id=? AND source_turn_id=? AND status=? "
                             "AND EXISTS (SELECT 1 FROM pending_continuations AS pending "
                             "WHERE pending.thread_id=continuation_attempts.thread_id "
                             "AND pending.turn_id=continuation_attempts.source_turn_id "
                             "AND pending.owner_key=? AND pending.goal_signature=? "
                             "AND pending.created_at BETWEEN ? AND ?)",
                             (
+                                next_status,
                                 ticket.thread_id,
                                 ticket.turn_id,
+                                expected,
                                 ticket.owner_key,
                                 ticket.goal_signature,
                                 time.time() - OBSERVATION_SECONDS,
@@ -257,8 +280,16 @@ class DesktopGoalObserver:
                         )
                         await db.commit()
                     if claimed.rowcount:
-                        await finish_cleanup(asyncio.to_thread(open_conversation, ticket.thread_id))
-                        await owner.report(ticket.thread_id, "goal_reopened", "goal_activation")
+                        if fallback:
+                            await owner.native.send(ticket.thread_id, ticket.turn_id)
+                            await owner.report(
+                                ticket.thread_id, "desktop_submitted", "goal_activation"
+                            )
+                        else:
+                            await finish_cleanup(
+                                asyncio.to_thread(open_conversation, ticket.thread_id)
+                            )
+                            await owner.report(ticket.thread_id, "goal_reopened", "goal_activation")
                 return "waiting"
             finally:
                 await finish_cleanup(adapter.aclose())
@@ -270,11 +301,15 @@ class DesktopGoalObserver:
                 elapsed = time.time() - started
                 if elapsed < 0 or elapsed >= OBSERVATION_SECONDS:
                     break
+                fallback = status == "goal_reopened" and elapsed >= FALLBACK_AFTER_SECONDS
                 try:
-                    async with asyncio.timeout(min(8.0, OBSERVATION_SECONDS - elapsed)):
+                    async with asyncio.timeout(
+                        min(25.0 if fallback else 8.0, OBSERVATION_SECONDS - elapsed)
+                    ):
                         result = await self._probe(
                             ticket,
                             reopen=status == "goal_opened" and elapsed >= REOPEN_AFTER_SECONDS,
+                            fallback=fallback,
                         )
                 except (AppServerError, OSError, TimeoutError, TransactionError):
                     result = "waiting"

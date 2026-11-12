@@ -1,0 +1,186 @@
+name: QuotaCrew personal builds
+on:
+  push:
+    branches: [personal]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quotacrew-personal-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'SmallChicken2k5/codex-quotacrew' && github.ref == 'refs/heads/personal'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      QT_QPA_PLATFORM: offscreen
+      UPSTREAM_REPO: erkanpulat/codex-quotacrew
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: personal
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Integrate the latest stable upstream release
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $upstreamTag = gh api "repos/$env:UPSTREAM_REPO/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $upstreamTag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw 'Could not verify the upstream release tag.'
+          }
+          git fetch --no-tags "https://github.com/$env:UPSTREAM_REPO.git" "refs/tags/$upstreamTag"
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream fetch failed.' }
+          $upstreamCommit = git rev-parse 'FETCH_HEAD^{commit}'
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream release commit is invalid.' }
+          git merge-base --is-ancestor $upstreamCommit HEAD
+          if ($LASTEXITCODE -eq 1) {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git merge --no-edit --no-ff $upstreamCommit
+            if ($LASTEXITCODE -ne 0) { throw 'Upstream needs a merge review. The published build is unchanged.' }
+          } elseif ($LASTEXITCODE -ne 0) {
+            throw 'Could not compare upstream history.'
+          }
+          $candidate = git rev-parse HEAD
+          $previous = gh release list --repo $env:GITHUB_REPOSITORY --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName // empty'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not check the last published build.' }
+          if ($previous) {
+            if ($previous -cnotmatch '^v1\.0\.[0-9]+$') { throw 'Unexpected release on the personal channel.' }
+            $publishedCommit = git rev-parse "$previous^{commit}"
+            if ($LASTEXITCODE -ne 0) { throw 'The previous release tag is missing.' }
+            if ($publishedCommit -eq $candidate) {
+              'build=false' >> $env:GITHUB_OUTPUT
+              return
+            }
+            if ([version]("1.0." + $env:GITHUB_RUN_NUMBER) -le [version]$previous.Substring(1)) {
+              throw 'The candidate version must be newer than the last published build.'
+            }
+          }
+          if ([int]$env:GITHUB_RUN_NUMBER -gt 65535) { throw 'Windows version component overflow.' }
+          'build=true' >> $env:GITHUB_OUTPUT
+          "candidate=$candidate" >> $env:GITHUB_OUTPUT
+          "upstream=$upstreamTag" >> $env:GITHUB_OUTPUT
+          "previous=$previous" >> $env:GITHUB_OUTPUT
+          "BUILD_VERSION=1.0.$env:GITHUB_RUN_NUMBER" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        if: steps.plan.outputs.build == 'true'
+        with:
+          python-version: '3.13'
+
+      - name: Check, test and build Windows packages
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python scripts/prepare_personal_release.py $env:BUILD_VERSION
+          python -m pip install -e '.[gui,dev]' pyinstaller
+          python -m ruff check src tests scripts
+          python -m ruff format --check src tests scripts
+          python -m mypy src
+          python -m pytest -q
+          python -m pip check
+          go install github.com/zricethezav/gitleaks/v8@v8.24.3
+          & "$(go env GOPATH)/bin/gitleaks.exe" git . --redact --no-banner
+          python -m PyInstaller --clean --noconfirm packaging/QuotaCrew.spec
+          python scripts/verify_windows_package.py
+          python scripts/verify_windows_package.py --first-run
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" packaging/installer.iss
+
+      - name: Verify installation and upgrade
+        if: steps.plan.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ steps.plan.outputs.previous }}
+          UPSTREAM_TAG: ${{ steps.plan.outputs.upstream }}
+        run: |
+          if ($env:PREVIOUS_TAG) {
+            $previousRepo = $env:GITHUB_REPOSITORY
+            $previousTag = $env:PREVIOUS_TAG
+          } else {
+            $previousRepo = $env:UPSTREAM_REPO
+            $previousTag = $env:UPSTREAM_TAG
+          }
+          $previousName = "QuotaCrew-Setup-$($previousTag.Substring(1)).exe"
+          gh release download $previousTag --repo $previousRepo --pattern $previousName --pattern 'SHA256SUMS.txt' --dir build/previous-release
+          if ($LASTEXITCODE -ne 0) { throw 'Previous release download failed.' }
+          $previousPath = "build/previous-release/$previousName"
+          $digest = (Get-FileHash -LiteralPath $previousPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ((Get-Content -LiteralPath build/previous-release/SHA256SUMS.txt) -notcontains "$digest  $previousName") {
+            throw 'Previous installer checksum mismatch.'
+          }
+          Remove-Item Env:GH_TOKEN
+          $env:QUOTACREW_PREVIOUS_INSTALLER = $previousPath
+          python scripts/verify_windows_installer.py
+
+      - name: Package Windows downloads
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          Copy-Item packaging/WINDOWS-README.md -Destination dist/QuotaCrew/README.md
+          Copy-Item LICENSE,THIRD_PARTY_NOTICES.md -Destination dist/QuotaCrew
+          $folder = 'installer/Output'
+          $portable = "QuotaCrew-portable-$env:BUILD_VERSION.zip"
+          Compress-Archive -Path dist/QuotaCrew/* -DestinationPath "$folder/$portable"
+          $installer = "QuotaCrew-Setup-$env:BUILD_VERSION.exe"
+          $files = foreach ($name in @($installer, $portable)) {
+            $digest = (Get-FileHash -LiteralPath "$folder/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest  $name"
+          }
+          $files | Set-Content -LiteralPath "$folder/SHA256SUMS.txt" -Encoding utf8NoBOM
+
+      - name: Publish verified build to this fork
+        if: steps.plan.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.plan.outputs.candidate }}
+          UPSTREAM_TAG: ${{ steps.plan.outputs.upstream }}
+        run: |
+          gh auth setup-git --hostname github.com
+          if ($LASTEXITCODE -ne 0) { throw 'Could not configure fork push.' }
+          git push origin "${env:CANDIDATE}:refs/heads/personal"
+          if ($LASTEXITCODE -ne 0) { throw 'The fork branch changed while building. Re-run on the new branch head.' }
+          $tag = "v$env:BUILD_VERSION"
+          $folder = 'installer/Output'
+          $assets = @(
+            "$folder/QuotaCrew-Setup-$env:BUILD_VERSION.exe",
+            "$folder/QuotaCrew-portable-$env:BUILD_VERSION.zip",
+            "$folder/SHA256SUMS.txt"
+          )
+          $existing = gh release view $tag --json isDraft --jq '.isDraft' 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($existing -ne 'true') { throw 'This version is already published.' }
+            gh release edit $tag --target $env:CANDIDATE
+          } else {
+            gh release create $tag --draft --target $env:CANDIDATE --title "QuotaCrew fork $env:BUILD_VERSION" --notes "Upstream $env:UPSTREAM_TAG plus the fork's tested patches. Install the Setup package once to enable updates from this fork."
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare a draft release.' }
+          gh release upload $tag @assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload the release assets.' }
+          $id = gh release view $tag --json databaseId --jq '.databaseId'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not find the draft release.' }
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/$id" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $release.draft) { throw 'Draft verification failed.' }
+          foreach ($file in $assets) {
+            $name = Split-Path -Leaf $file
+            $expected = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            $asset = @($release.assets | Where-Object name -ceq $name)
+            if ($asset.Count -ne 1 -or $asset[0].digest -ne "sha256:$expected" -or $asset[0].size -ne (Get-Item -LiteralPath $file).Length) {
+              throw "Asset verification failed for $name."
+            }
+          }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publication failed; the release is still a draft.' }

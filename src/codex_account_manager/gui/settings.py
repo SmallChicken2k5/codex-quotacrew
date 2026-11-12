@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QHBoxLayout,
     QLayout,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -26,6 +27,7 @@ from codex_account_manager.gui.i18n import (
 )
 from codex_account_manager.gui.view_base import BaseView, setting_row, view_header
 from codex_account_manager.gui.widgets import ComboBox, ToggleSwitch
+from codex_account_manager.monitoring.warmup import parse_times
 from codex_account_manager.storage.repositories import SettingsRepository
 
 
@@ -91,6 +93,34 @@ class SettingsView(BaseView):
             tr("Checks are on by default for new installations. Pause them here at any time."),
             self.monitoring,
         )
+
+        self.warmup_mode = ComboBox()
+        for title, mode in (
+            ("Off", "off"),
+            ("After quota resets", "reset"),
+            ("At scheduled times", "scheduled"),
+        ):
+            self.warmup_mode.addItem(tr(title), mode)
+        setting_row(
+            general_layout,
+            tr("Warm up all accounts"),
+            tr("With monitoring on, send one small request per eligible account. This uses quota."),
+            self.warmup_mode,
+        )
+        self.warmup_times = QLineEdit()
+        self._saved_warmup_times = ""
+        self.warmup_times.setPlaceholderText("08:00, 13:00, 18:00")
+        self.warmup_times.setAccessibleName(tr("Warm-up times"))
+        self.warmup_times.setMaxLength(170)
+        self.warmup_times.setEnabled(False)
+        setting_row(
+            general_layout,
+            tr("Warm-up times"),
+            tr("Local time in HH:MM format. Separate multiple times with commas."),
+            self.warmup_times,
+        )
+        self.warmup_mode.currentIndexChanged.connect(self._save_warmup_mode)
+        self.warmup_times.editingFinished.connect(self._save_warmup_times)
 
         self.policy.setToolTip(
             tr(
@@ -278,6 +308,13 @@ class SettingsView(BaseView):
             self.ide_refresh.setChecked(values.get("ide_refresh", "false") == "true")
         with QSignalBlocker(self.monitoring):
             self.monitoring.setChecked(values.get("monitor_enabled", "true") == "true")
+        with QSignalBlocker(self.warmup_mode):
+            self.warmup_mode.setCurrentIndex(
+                max(0, self.warmup_mode.findData(values.get("warmup_mode", "off")))
+            )
+        self._saved_warmup_times = values.get("warmup_times", "")
+        self.warmup_times.setText(self._saved_warmup_times)
+        self.warmup_times.setEnabled(self.warmup_mode.currentData() == "scheduled")
         with QSignalBlocker(self.background):
             self.background.setChecked(values.get("keep_in_tray", "false") == "true")
         self.monitoring_changed.emit(self.monitoring.isChecked())
@@ -300,6 +337,27 @@ class SettingsView(BaseView):
             self._monitor_saved()
 
         self.runner.submit(SettingsRepository().set("monitor_enabled", str(enabled).lower()), saved)
+
+    def _save_warmup_mode(self, _index: int) -> None:
+        mode = self.warmup_mode.currentData()
+        self.warmup_times.setEnabled(mode == "scheduled")
+        self.runner.submit(
+            SettingsRepository().set("warmup_mode", mode), lambda _: self._monitor_saved()
+        )
+
+    def _save_warmup_times(self) -> None:
+        try:
+            times = ", ".join(parse_times(self.warmup_times.text()))
+        except ValueError as error:
+            self.warmup_times.setText(self._saved_warmup_times)
+            QMessageBox.warning(self, tr("Warm-up times"), tr(str(error)))
+            return
+        self.warmup_times.setText(times)
+        if times != self._saved_warmup_times:
+            self._saved_warmup_times = times
+            self.runner.submit(
+                SettingsRepository().set("warmup_times", times), lambda _: self._monitor_saved()
+            )
 
     def _save_ide_continue(self, enabled: bool) -> None:
         from codex_account_manager.core.events import bus

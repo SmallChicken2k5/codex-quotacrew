@@ -171,7 +171,7 @@ async def test_one_reopen_can_start_goal_and_is_not_replayed(migrated_db, goal_s
     owner.native.send.assert_not_awaited()
 
 
-async def test_unresponsive_goal_expires_after_only_one_reopen(migrated_db, goal_setup):
+async def test_quota_goal_still_idle_after_reopen_gets_one_request(migrated_db, goal_setup):
     owner, server, ticket, opened, clock = goal_setup
 
     async def activity(_tid):
@@ -180,14 +180,50 @@ async def test_unresponsive_goal_expires_after_only_one_reopen(migrated_db, goal
         return "idle"
 
     owner.native.thread_status.side_effect = activity
+
+    async def send(thread_id, turn_id):
+        assert await journal_status() == ("goal_fallback_attempted",)
+        server.latest = {"id": "next", "status": "inProgress"}
+        owner.native.thread_status.side_effect = None
+        owner.native.thread_status.return_value = "active"
+        return {"threadId": thread_id}
+
+    owner.native.send.side_effect = send
     await owner.run(ticket)
     await finish(owner)
     assert opened == ["thread", "thread"]
-    assert await journal_status() == ("goal_unconfirmed",)
+    assert await journal_status() == ("goal_resumed",)
     assert await owner.goal_observer.state(ticket) is None
     await owner.run(ticket)
     assert opened == ["thread", "thread"]
-    owner.native.send.assert_not_awaited()
+    owner.native.send.assert_awaited_once_with("thread", ticket.turn_id)
+
+
+async def test_uncertain_goal_delivery_is_not_replayed_after_restart(migrated_db, goal_setup):
+    from codex_account_manager.continuity.automation import ContinuationSupervisor
+    from codex_account_manager.core.errors import AppServerError
+
+    owner, server, ticket, _opened, clock = goal_setup
+    await owner._claim(ticket)
+    await owner.goal_observer.opened(ticket)
+    clock[0] += 15
+    owner.native.thread_status.return_value = "idle"
+    await owner.goal_observer._probe(ticket, reopen=True)
+    clock[0] += 20
+    owner.native.send.side_effect = AppServerError("Delivery not verified")
+    with pytest.raises(AppServerError, match="Delivery not verified"):
+        await owner.goal_observer._probe(ticket, reopen=False, fallback=True)
+    owner.native.send.assert_awaited_once_with("thread", ticket.turn_id)
+    assert await journal_status() == ("goal_fallback_attempted",)
+
+    restarted = ContinuationSupervisor(factory=lambda: server)
+    restarted.native.thread_status = AsyncMock(return_value="idle")
+    restarted.native.send = AsyncMock()
+    clock[0] += 30
+    restarted.goal_observer.start(ticket)
+    await finish(restarted)
+    restarted.native.send.assert_not_awaited()
+    assert await journal_status() == ("uncertain",)
 
 
 @pytest.mark.parametrize("change", ["account", "paused", "budget", "objective", "disabled", "turn"])

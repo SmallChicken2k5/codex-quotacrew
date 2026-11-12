@@ -73,6 +73,15 @@ EN = {
 }
 
 TR = {
+    "Checking whether the goal continuation request started a new turn.": "Hedefi sürdürme isteğinin yeni bir tur başlatıp başlatmadığı kontrol ediliyor.",
+    "Warm up all accounts": "Tüm hesapları önceden başlat",
+    "After quota resets": "Kota sıfırlandıktan sonra",
+    "At scheduled times": "Planlanan saatlerde",
+    "With monitoring on, send one small request per eligible account. This uses quota.": "İzleme açıkken uygun her hesap için küçük bir istek gönderir. Kota kullanır.",
+    "Warm-up times": "Ön başlatma saatleri",
+    "Local time in HH:MM format. Separate multiple times with commas.": "Yerel saat, SS:DD biçiminde. Saatleri virgülle ayırın.",
+    "Enter up to 24 local times as HH:MM, separated by commas.": "SS:DD biçiminde en fazla 24 yerel saati virgülle ayırarak girin.",
+    "Warm-up: {completed} completed, {failed} failed.": "Ön başlatma: {completed} tamamlandı, {failed} başarısız.",
     "Newer QuotaCrew version required": "Daha yeni bir QuotaCrew sürümü gerekiyor",
     "This account database was updated by a newer QuotaCrew version. Install that version or a newer one. Do not delete or reset your account data.": "Hesap veritabanı daha yeni bir QuotaCrew sürümüyle güncellenmiş. O sürümü veya daha yenisini kurun. Hesap verilerinizi silmeyin veya sıfırlamayın.",
     "Codex workspace routing rejected discovery (401).": "Codex çalışma alanı bağlantısını reddetti (401). Bu bir kota sonucu değildir; bağlantı yeniden kontrol edilecek. Manuel hesap geçişi kullanılabilir.",
@@ -929,11 +938,20 @@ def state_label(value: str) -> str:
 
 
 def work_status(work: ObservedWork) -> tuple[str, str]:
+    if work.continuation_status == "goal_fallback_attempted" and work.continuation_pending:
+        return tr("Checking continuation"), tr(
+            "Checking whether the goal continuation request started a new turn."
+        )
     if work.continuation_status in {"goal_opened", "goal_reopened"} and work.continuation_pending:
         return tr("Waiting for goal to resume"), tr(
             "The conversation was opened without a message. Its goal is being checked for up to 60 seconds. Other jobs and account switching continue."
         )
-    if work.continuation_status in {"goal_unconfirmed", "goal_opened", "goal_reopened"}:
+    if work.continuation_status in {
+        "goal_unconfirmed",
+        "goal_opened",
+        "goal_reopened",
+        "goal_fallback_attempted",
+    }:
         return tr("Goal resumption unconfirmed"), tr(
             "The goal could not be confirmed after opening. No automatic openings remain for this attempt. Open the conversation in Codex to check it; other jobs and account switching continue."
         )

@@ -78,7 +78,7 @@ class WorkTracker:
                           SELECT 1 FROM continuation_attempts AS activation
                           WHERE activation.thread_id=pending.thread_id
                             AND activation.source_turn_id=pending.turn_id
-                            AND activation.status IN ('goal_opened','goal_reopened')
+                            AND activation.status IN ('goal_opened','goal_reopened','goal_fallback_attempted')
                       ))
                 ),
                 (

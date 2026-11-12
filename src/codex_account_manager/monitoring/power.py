@@ -362,7 +362,9 @@ class PowerChecks:
                               ON attempt.thread_id=pending.thread_id
                              AND attempt.source_turn_id=pending.turn_id
                             WHERE pending.created_at BETWEEN ? AND ?
-                              AND attempt.status IN ('goal_opened','goal_reopened')""",
+                              AND attempt.status IN (
+                                  'goal_opened','goal_reopened','goal_fallback_attempted'
+                              )""",
                             (now - OBSERVATION_SECONDS, now),
                         )
                     ).fetchone()
@@ -401,6 +403,22 @@ class PowerChecks:
                             values={"count": pending[0]},
                         )
                     goal = await adapter.get_goal(target.thread_id or "")
+                    if (
+                        target.goal_signature is not None
+                        and goal is not None
+                        and goal.thread_id == target.thread_id
+                        and not goal.present
+                        and selected_turn
+                        and normalize_turn_status(selected_turn.get("status")) == "completed"
+                        and isinstance(selected_turn.get("id"), str)
+                    ):
+                        recovered = await adapter.completed_goal(
+                            target.thread_id or "", selected_turn["id"]
+                        )
+                        if recovered is not None and work_finished(
+                            target, selected_turn, recovered
+                        ):
+                            goal = recovered
                     if not work_finished(target, selected_turn, goal):
                         if goal is None or goal.thread_id != target.thread_id:
                             return PowerEvidence(

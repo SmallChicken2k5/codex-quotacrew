@@ -26,7 +26,7 @@ from codex_account_manager.core.paths import paths
 from codex_account_manager.core.windows_shell import launch_from_explorer
 from codex_account_manager.platform import package
 
-REPOSITORY = "erkanpulat/codex-quotacrew"
+REPOSITORY = "SmallChicken2k5/codex-quotacrew"
 RELEASES_URL = f"https://github.com/{REPOSITORY}/releases"
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 MAX_INSTALLER_BYTES = 512 * 1024 * 1024
