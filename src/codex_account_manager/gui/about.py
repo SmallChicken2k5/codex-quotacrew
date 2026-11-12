@@ -51,7 +51,10 @@ class AboutView(BaseView):
             (
                 ("Star on GitHub", "https://github.com/erkanpulat/codex-quotacrew"),
                 ("Report an issue", "https://github.com/erkanpulat/codex-quotacrew/issues"),
-                ("Contribute a pull request", "https://github.com/erkanpulat/codex-quotacrew/pulls"),
+                (
+                    "Contribute a pull request",
+                    "https://github.com/erkanpulat/codex-quotacrew/pulls",
+                ),
                 ("Developer profile", "https://github.com/erkanpulat"),
             )
         ):
