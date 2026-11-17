@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import replace
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -21,11 +23,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from codex_account_manager.core.errors import OperationBusyError
 from codex_account_manager.gui.design import DARK, make_icon
 from codex_account_manager.gui.i18n import tr
 from codex_account_manager.gui.view_base import BaseView, view_header
 from codex_account_manager.gui.widgets import label
 from codex_account_manager.monitoring.power import (
+    BLOCKED_SHUTDOWN_MINUTES,
     CONDITION_COUNTDOWN_SECONDS,
     MAX_COUNTDOWN_MINUTES,
     PowerChecks,
@@ -133,6 +137,26 @@ class PowerControls(QFrame):
         work_layout.addWidget(label(tr("Conversation"), "FieldTitle"))
         work_layout.addWidget(self.conversation)
         work_layout.addWidget(self.refresh_button)
+        self.shutdown_if_blocked = QCheckBox(
+            tr(
+                "Shut down if the goal stays blocked for {minutes} minutes",
+                minutes=BLOCKED_SHUTDOWN_MINUTES,
+            )
+        )
+        self.shutdown_if_blocked.toggled.connect(self._update_summary)
+        work_layout.addWidget(self.shutdown_if_blocked)
+        self.limit_runtime = QCheckBox(tr("Set a maximum runtime"))
+        work_layout.addWidget(self.limit_runtime)
+        self.runtime_minutes = QSpinBox()
+        self.runtime_minutes.setRange(1, MAX_COUNTDOWN_MINUTES)
+        self.runtime_minutes.setValue(480)
+        self.runtime_minutes.setSuffix(tr(" minutes"))
+        self.runtime_minutes.setAccessibleName(tr("Maximum runtime (minutes)"))
+        self.runtime_minutes.setEnabled(False)
+        self.limit_runtime.toggled.connect(self.runtime_minutes.setEnabled)
+        self.limit_runtime.toggled.connect(self._update_summary)
+        self.runtime_minutes.valueChanged.connect(self._update_summary)
+        work_layout.addWidget(self.runtime_minutes)
         detail_layout.addWidget(self.work_fields)
         self.time_fields = QWidget()
         time_layout = QVBoxLayout(self.time_fields)
@@ -171,7 +195,14 @@ class PowerControls(QFrame):
         summary_layout.setSpacing(10)
         summary_layout.addWidget(label(tr("Plan summary"), "H2"))
         self.summary_values = {}
-        for key in ("Condition", "Target", "Countdown", "Status"):
+        for key in (
+            "Condition",
+            "Target",
+            "Countdown",
+            "Blocked goal",
+            "Maximum runtime",
+            "Status",
+        ):
             row = QHBoxLayout()
             heading = label(tr(key), "Caption")
             value = label("", "FieldTitle")
@@ -282,7 +313,13 @@ class PowerControls(QFrame):
         )
         for value, button in self.presets.items():
             button.setChecked(value == minutes)
-        remaining = self.plan.remaining(time.monotonic()) if target else None
+        now = time.monotonic()
+        remaining = self.plan.remaining(now) if target else None
+        time_limit_remaining = self.plan.time_limit_remaining(now)
+        if time_limit_remaining is not None and time_limit_remaining <= CONDITION_COUNTDOWN_SECONDS:
+            remaining = (
+                time_limit_remaining if remaining is None else min(remaining, time_limit_remaining)
+            )
         state = (
             "Countdown active"
             if remaining is not None
@@ -300,6 +337,24 @@ class PowerControls(QFrame):
         )
         self.summary_values["Countdown"].setText(
             tr("Last 2 minutes included") if mode == "timer" else tr("2 minutes after verification")
+        )
+        blocked_enabled = (
+            target.shutdown_if_blocked
+            if target
+            else mode == "work" and self.shutdown_if_blocked.isChecked()
+        )
+        self.summary_values["Blocked goal"].setText(
+            tr("{minutes} min", minutes=BLOCKED_SHUTDOWN_MINUTES) if blocked_enabled else "—"
+        )
+        time_limit = (
+            target.time_limit_minutes
+            if target
+            else self.runtime_minutes.value()
+            if mode == "work" and self.limit_runtime.isChecked()
+            else None
+        )
+        self.summary_values["Maximum runtime"].setText(
+            tr("{minutes} min", minutes=time_limit) if time_limit is not None else "—"
         )
         self.summary_values["Status"].setText(tr(state))
         self.status_title.setText(tr(state) if target else tr("Shutdown plan is off"))
@@ -368,6 +423,9 @@ class PowerControls(QFrame):
         self.conversation.setEnabled(editable)
         self.refresh_button.setEnabled(editable and not self._loading)
         self.countdown_minutes.setEnabled(editable)
+        self.shutdown_if_blocked.setEnabled(editable)
+        self.limit_runtime.setEnabled(editable)
+        self.runtime_minutes.setEnabled(editable and self.limit_runtime.isChecked())
         self.schedule_button.setEnabled(editable and sys.platform == "win32")
         self.cancel_button.setEnabled(not editable)
         for button in [*self.mode_buttons.buttons(), *self.presets.values()]:
@@ -417,6 +475,29 @@ class PowerControls(QFrame):
                 minutes=minutes,
             )
         )
+        if target.mode == "work":
+            target = replace(
+                target,
+                shutdown_if_blocked=self.shutdown_if_blocked.isChecked()
+                and target.goal_signature is not None,
+                time_limit_minutes=self.runtime_minutes.value()
+                if self.limit_runtime.isChecked()
+                else None,
+            )
+            if target.shutdown_if_blocked:
+                confirmation += "\n\n" + tr(
+                    "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.",
+                    minutes=BLOCKED_SHUTDOWN_MINUTES,
+                )
+            elif self.shutdown_if_blocked.isChecked():
+                confirmation += "\n\n" + tr(
+                    "The selected conversation has no goal. The blocked-goal option does not apply."
+                )
+            if target.time_limit_minutes is not None:
+                confirmation += "\n\n" + tr(
+                    "Maximum runtime: {minutes} minutes from confirmation. Windows will shut down even if Codex is still working.",
+                    minutes=target.time_limit_minutes,
+                )
         if (
             QMessageBox.question(
                 self,
@@ -468,6 +549,8 @@ class PowerControls(QFrame):
             return
         now = time.monotonic()
         remaining = self.plan.remaining(now)
+        time_limit = self.plan.time_limit_remaining(now)
+        time_limit_warning = time_limit is not None and time_limit <= CONDITION_COUNTDOWN_SECONDS
         text = (
             tr(self.plan.reason, **self.plan.reason_values)
             if remaining is None
@@ -480,9 +563,25 @@ class PowerControls(QFrame):
                 "Timed shutdown in {time}. Codex work will not delay it.",
                 time=f"{hours:02}:{minutes:02}:{seconds:02}",
             )
+        if (
+            time_limit is not None
+            and time_limit_warning
+            and (remaining is None or time_limit <= remaining)
+        ):
+            text = tr(
+                "Maximum runtime ends in {seconds}s. Save your work or cancel.",
+                seconds=time_limit,
+            )
         self.status.setText(text)
         self._update_summary()
         self.status_changed.emit(text, True)
+        if time_limit_warning and not self._warned:
+            self._warned = True
+            if remaining is None:
+                self.countdown_started.emit()
+        if time_limit == 0:
+            self._execute(retry_if_busy=True)
+            return
         if target.mode == "timer":
             if (
                 remaining is not None
@@ -507,7 +606,7 @@ class PowerControls(QFrame):
                 return
             before = self.plan.deadline
             self.plan.observe(evidence, time.monotonic())
-            if before is None and self.plan.deadline is not None:
+            if before is None and self.plan.deadline is not None and not self._warned:
                 self.countdown_started.emit()
             if self.plan.remaining(time.monotonic()) == 0:
                 self._execute()
@@ -521,19 +620,28 @@ class PowerControls(QFrame):
             lambda _error: checked(PowerEvidence(False, "Waiting for a fresh check.")),
         )
 
-    def _execute(self) -> None:
+    def _execute(self, *, retry_if_busy: bool = False) -> None:
         from codex_account_manager.platform.power import shutdown_windows
 
-        self.cancel()
         try:
             from codex_account_manager.core.operation_lock import OperationLock
             from codex_account_manager.core.paths import paths
 
             with OperationLock(paths.data_dir / "account-operation.lock"):
                 shutdown_windows()
+        except OperationBusyError:
+            if retry_if_busy:
+                self.status.setText(
+                    tr("Maximum runtime ended. Waiting for the account operation to finish.")
+                )
+                return
+            self.cancel()
+            self.status.setText(tr("Windows did not accept shutdown. The plan was cancelled."))
         except Exception:
+            self.cancel()
             self.status.setText(tr("Windows did not accept shutdown. The plan was cancelled."))
         else:
+            self.cancel()
             self.status.setText(
                 tr("Shutdown requested. Windows may ask you to save open applications.")
             )

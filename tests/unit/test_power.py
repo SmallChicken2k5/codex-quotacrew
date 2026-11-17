@@ -762,6 +762,44 @@ async def test_shutdown_explains_selected_goal_state(migrated_db, monkeypatch, s
     evidence = await checks.check(target)
     assert not evidence.ready
     assert evidence.reason == expected
+    assert not evidence.blocked_identity
+    opted_in = await checks.check(replace(target, shutdown_if_blocked=True))
+    assert bool(opted_in.blocked_identity) == (state == "blocked")
+    assert not opted_in.ready
+
+
+def test_blocked_goal_requires_thirty_minutes_of_verified_idle_checks():
+    plan = ShutdownPlan()
+    blocked = PowerEvidence(False, "blocked", blocked_identity="goal:one:turn:one")
+    plan.arm(PowerTarget("work", "thread", "goal", "turn", shutdown_if_blocked=True))
+    for minute in range(30):
+        plan.observe(blocked, minute * 60)
+    assert plan.deadline is None
+
+    plan.observe(blocked, 30 * 60)
+    assert plan.remaining(30 * 60) == 120
+    plan.observe(PowerEvidence(False, "continuation queued"), 30 * 60 + 15)
+    assert plan.deadline is None
+    assert plan.blocked_since is None
+
+
+@pytest.mark.parametrize("change", ["account or turn changed", "long check gap", "work active"])
+def test_blocked_window_resets_when_shutdown_evidence_changes(change):
+    plan = ShutdownPlan()
+    target = PowerTarget("work", "thread", "goal", "turn", shutdown_if_blocked=True)
+    plan.arm(target)
+    blocked = PowerEvidence(False, "blocked", blocked_identity="initial")
+    for minute in range(30):
+        plan.observe(blocked, minute * 60)
+
+    if change == "account or turn changed":
+        blocked = replace(blocked, blocked_identity="new")
+    elif change == "work active":
+        plan.observe(PowerEvidence(False, "running"), 29 * 60 + 30)
+    next_check = 31 * 60 if change == "long check gap" else 30 * 60
+    plan.observe(blocked, next_check)
+    assert plan.deadline is None
+    assert plan.blocked_since == next_check
 
 
 async def test_work_countdown_restarts_when_same_workspace_user_changes(migrated_db, monkeypatch):

@@ -2520,6 +2520,39 @@ def test_timed_shutdown_warns_within_total_duration_and_executes_once(window, mo
     submit.assert_not_called()
 
 
+def test_work_runtime_limit_can_expire_without_a_successful_work_check(window, monkeypatch):
+    from unittest.mock import Mock
+
+    from codex_account_manager.gui import power as gui_power
+    from codex_account_manager.monitoring.power import PowerEvidence, PowerTarget
+    from codex_account_manager.platform import power
+
+    widget = window.power_view.controls
+    clock = [100.0]
+    monkeypatch.setattr(gui_power.time, "monotonic", lambda: clock[0])
+    shutdown = Mock()
+    monkeypatch.setattr(power, "shutdown_windows", shutdown)
+    widget.mode.setCurrentIndex(widget.mode.findData("work"))
+    widget.limit_runtime.setChecked(True)
+    widget.runtime_minutes.setValue(60)
+    widget.plan.arm(
+        PowerTarget("work", "thread", "goal", "turn", time_limit_minutes=60), now=clock[0]
+    )
+    warning = Mock()
+    widget.countdown_started.connect(warning)
+    widget._busy = True
+    clock[0] = 3580
+    widget.plan.observe(PowerEvidence(False, "usage limit"), clock[0])
+    widget._tick()
+    warning.assert_called_once()
+    shutdown.assert_not_called()
+
+    clock[0] = 3700
+    widget._tick()
+    shutdown.assert_called_once()
+    assert widget.plan.target is None
+
+
 def test_timer_cancel_and_monitoring_pause_are_independent(window, monkeypatch):
     from unittest.mock import Mock
 

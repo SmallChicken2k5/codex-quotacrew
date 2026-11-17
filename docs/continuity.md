@@ -28,7 +28,7 @@ With monitoring and the relevant continuation option enabled:
 
 Goal opening sends no message. If a new turn is already running, QuotaCrew observes it without another action. A goal whose quota interruption is verified may be reactivated, preserving its budget. User-paused, blocked or completed goals are not automatically restarted; approval requests remain with the user. Other continuation requests are model input and can consume quota.
 
-After opening a goal, an independent observer checks lightweight Desktop activity for up to 60 seconds. It releases the account lock between checks and does not hold up other conversations. After at least ten seconds it may open the conversation one more time, only after rechecking the same account, available capacity, unchanged eligible goal and quota turn, and idle Desktop state. The deadline and second-opening claim survive application restarts. No resumed work after that window requires a manual check; the conversation is not opened indefinitely. Manual switching or stopping continuation cancels these observers. Conditional shutdown waits while goal activation is pending.
+After opening a goal, an independent observer checks lightweight Desktop activity for up to 60 seconds. It releases the account lock between checks and does not hold up other conversations. After at least ten seconds it may open the conversation one more time, only after rechecking the same account, available capacity, unchanged eligible goal and quota turn, and an idle or unloaded Desktop conversation. The deadline and second-opening claim survive application restarts. No resumed work after that window requires a manual check; the conversation is not opened indefinitely. Manual switching or stopping continuation cancels these observers. Conditional shutdown waits while goal activation is pending.
 
 For a verified quota interruption, if the same failed turn and active goal are still idle after reopening, QuotaCrew can send one continuation request starting 30 seconds after the first opening. It records the attempt before sending, then checks for a new turn. The request can use quota, and uncertain delivery requires manual review.
 
@@ -70,7 +70,9 @@ Continuation labels distinguish a queued request from one already sent. **Check 
 
 Plans require confirmation, apply only to the current application session and can be cancelled from the page or tray.
 
-- **Selected work:** wait for the selected conversation to finish, including continuation turns. If it has a goal, that goal must complete. Errors, pauses and requests for input are not completion.
+- **Selected work:** wait for the selected conversation to finish, including continuation turns. If it has a goal, that goal must complete. Errors, pauses and requests for input do not count as completion. Two optional settings apply to this mode:
+  - **Shut down if the goal stays blocked for 30 minutes:** start a two-minute countdown after QuotaCrew has continuously verified that the selected goal is blocked, Codex is idle, and there are no pending continuations. A resumed, paused, quota-limited, changed, or unverifiable goal resets the wait.
+  - **Set a maximum runtime:** pick the latest time to shut down, measured from confirmation. This deadline also applies while Codex is working or waiting for quota. The final two-minute warning is included in the runtime. Windows is not instructed to force-close applications.
 - **All limits:** require fresh identity and quota checks confirming that every saved account is blocked by an exhausted five-hour or weekly quota. An unreadable account does not count as exhausted. Unused reset credits do not restore usable quota until applied.
 - **Timer:** choose 1–1440 minutes. The final two-minute warning is included in that duration; a one-minute timer warns immediately. This mode does not wait for work to finish.
 

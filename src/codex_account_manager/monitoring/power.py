@@ -28,11 +28,14 @@ class PowerEvidence:
     reason: str
     identity: str = ""
     values: dict = field(default_factory=dict)
+    blocked_identity: str = ""
 
 
 MAX_COUNTDOWN_MINUTES = 1440
 CONDITION_COUNTDOWN_SECONDS = 120
 EVIDENCE_MAX_AGE_SECONDS = 45
+BLOCKED_SHUTDOWN_MINUTES = 30
+BLOCKED_CHECK_MAX_GAP_SECONDS = 90
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted", "cancelled"})
 
 
@@ -42,6 +45,8 @@ class PowerTarget:
     thread_id: str | None = None
     goal_signature: str | None = None
     turn_id: str | None = None
+    shutdown_if_blocked: bool = False
+    time_limit_minutes: int | None = None
 
 
 def all_accounts_limited(health: list[ProfileHealth], now: datetime) -> bool:
@@ -95,6 +100,9 @@ class ShutdownPlan:
         self.target: PowerTarget | None = None
         self.deadline: float | None = None
         self.checked_at: float | None = None
+        self.time_limit_deadline: float | None = None
+        self.blocked_since: float | None = None
+        self.blocked_identity = ""
         self.identity = ""
         self.generation = 0
         self.reason = "Shutdown is off."
@@ -113,8 +121,14 @@ class ShutdownPlan:
             target.mode == "work" and (not target.thread_id or not target.turn_id)
         ):
             raise ValueError("Select a verified running conversation first.")
+        if target.time_limit_minutes is not None and (
+            target.mode != "work" or not 1 <= target.time_limit_minutes <= MAX_COUNTDOWN_MINUTES
+        ):
+            raise ValueError("Invalid maximum runtime for the shutdown plan.")
         self.cancel()
         self.target = target
+        if target.time_limit_minutes is not None:
+            self.time_limit_deadline = now + target.time_limit_minutes * 60
         if target.mode == "timer":
             self.deadline = now + self.seconds
         self.reason = "Waiting for the selected condition."
@@ -123,6 +137,8 @@ class ShutdownPlan:
         self.generation += 1
         self.target = None
         self.deadline = self.checked_at = None
+        self.time_limit_deadline = self.blocked_since = None
+        self.blocked_identity = ""
         self.identity = ""
         self.reason = "Shutdown is off."
         self.reason_values = {}
@@ -130,8 +146,33 @@ class ShutdownPlan:
     def observe(self, evidence: PowerEvidence, now: float) -> None:
         if self.target is None or self.target.mode == "timer":
             return
-        if self.checked_at is None or now - self.checked_at > EVIDENCE_MAX_AGE_SECONDS:
+        previous_check = self.checked_at
+        if previous_check is None or now - previous_check > EVIDENCE_MAX_AGE_SECONDS:
             self.deadline = None
+        if (
+            not self.target.shutdown_if_blocked
+            or not evidence.blocked_identity
+            or self.blocked_identity != evidence.blocked_identity
+            or previous_check is None
+            or now - previous_check > BLOCKED_CHECK_MAX_GAP_SECONDS
+        ):
+            self.blocked_since = None
+            self.blocked_identity = ""
+        if self.target.shutdown_if_blocked and evidence.blocked_identity:
+            if self.blocked_since is None:
+                self.blocked_since = now
+                self.blocked_identity = evidence.blocked_identity
+            waiting = BLOCKED_SHUTDOWN_MINUTES * 60 - (now - self.blocked_since)
+            if waiting <= 0:
+                evidence = PowerEvidence(
+                    True, "The selected goal remained blocked.", evidence.blocked_identity
+                )
+            else:
+                evidence = PowerEvidence(
+                    False,
+                    "Goal is blocked. Shutdown countdown starts in about {minutes} minutes if it stays blocked and Codex is idle.",
+                    values={"minutes": math.ceil(waiting / 60)},
+                )
         self.checked_at = now
         self.reason = evidence.reason
         self.reason_values = evidence.values
@@ -141,6 +182,11 @@ class ShutdownPlan:
         elif self.deadline is None or self.identity != evidence.identity:
             self.identity = evidence.identity
             self.deadline = now + CONDITION_COUNTDOWN_SECONDS
+
+    def time_limit_remaining(self, now: float) -> int | None:
+        if self.time_limit_deadline is None:
+            return None
+        return max(0, math.ceil(self.time_limit_deadline - now))
 
     def remaining(self, now: float) -> int | None:
         if self.target is not None and self.target.mode == "timer":
@@ -443,7 +489,22 @@ class PowerChecks:
                                 "active": "The selected goal is still active. Shutdown will wait for it to complete.",
                             }
                             if goal.status in reasons:
-                                return PowerEvidence(False, reasons[goal.status])
+                                blocked_identity = ""
+                                if (
+                                    target.shutdown_if_blocked
+                                    and goal.status == "blocked"
+                                    and selected_turn
+                                    and selected_turn.get("id")
+                                    and normalize_turn_status(selected_turn.get("status"))
+                                    in _TERMINAL_STATUSES
+                                ):
+                                    blocked_identity = (
+                                        f"blocked:{owner_key}:{target.thread_id}:"
+                                        f"{selected_turn['id']}:{target.goal_signature}"
+                                    )
+                                return PowerEvidence(
+                                    False, reasons[goal.status], blocked_identity=blocked_identity
+                                )
                         return PowerEvidence(
                             False,
                             "The selected turn has not completed successfully. Shutdown is waiting.",

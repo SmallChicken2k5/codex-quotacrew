@@ -1,6 +1,19 @@
 """Brazilian Portuguese translations for the QuotaCrew interface."""
 
 PT_BR: dict[str, str] = {
+    "Shut down if the goal stays blocked for {minutes} minutes": "Desligar se a meta ficar bloqueada por {minutes} minutos",
+    "Set a maximum runtime": "Definir duração máxima",
+    "Maximum runtime (minutes)": "Duração máxima (minutos)",
+    "Maximum runtime": "Duração máxima",
+    "Blocked goal": "Meta bloqueada",
+    "{minutes} min": "{minutes} min",
+    "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.": "Se a meta selecionada ficar bloqueada por {minutes} minutos e o Codex estiver ocioso, começa uma contagem de 2 minutos para desligar.",
+    "The selected conversation has no goal. The blocked-goal option does not apply.": "A conversa selecionada não tem meta. A opção de meta bloqueada não se aplica.",
+    "Maximum runtime: {minutes} minutes from confirmation. Windows will shut down even if Codex is still working.": "Duração máxima: {minutes} minutos após a confirmação. O Windows será desligado mesmo se o Codex ainda estiver trabalhando.",
+    "Goal is blocked. Shutdown countdown starts in about {minutes} minutes if it stays blocked and Codex is idle.": "A meta está bloqueada. A contagem para desligar começa em cerca de {minutes} minutos se ela continuar bloqueada e o Codex estiver ocioso.",
+    "The selected goal remained blocked.": "A meta selecionada continuou bloqueada.",
+    "Maximum runtime ends in {seconds}s. Save your work or cancel.": "A duração máxima termina em {seconds}s. Salve seu trabalho ou cancele.",
+    "Maximum runtime ended. Waiting for the account operation to finish.": "A duração máxima terminou. Aguardando a conclusão da operação da conta.",
     "Newer QuotaCrew version required": "É necessária uma versão mais recente do QuotaCrew",
     "This account database was updated by a newer QuotaCrew version. Install that version or a newer one. Do not delete or reset your account data.": "Este banco de contas foi atualizado por uma versão mais recente do QuotaCrew. Instale essa versão ou uma mais recente. Não apague nem redefina os dados das contas.",
     "Codex workspace routing rejected discovery (401).": "O roteamento de espaços de trabalho do Codex recusou a descoberta (401).",

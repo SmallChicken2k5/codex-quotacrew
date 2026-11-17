@@ -528,7 +528,12 @@ class MainWindow(QMainWindow):
         import math
         import time
 
-        remaining = self.power_view.controls.plan.remaining(time.monotonic())
+        plan = self.power_view.controls.plan
+        now = time.monotonic()
+        remaining = plan.remaining(now)
+        time_limit = plan.time_limit_remaining(now)
+        if time_limit is not None:
+            remaining = time_limit if remaining is None else min(remaining, time_limit)
         minutes = max(1, math.ceil((remaining if remaining is not None else 120) / 60))
         self.tray.showMessage(
             tr("Shutdown countdown started"),

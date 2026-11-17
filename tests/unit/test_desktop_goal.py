@@ -319,7 +319,9 @@ async def test_stop_before_observer_starts_is_scoped(migrated_db, goal_setup, sc
 
 
 @pytest.mark.parametrize("activity", ["active", "missing", "unknown_capacity"])
-async def test_reopen_requires_inactive_desktop_and_known_capacity(migrated_db, goal_setup, activity):
+async def test_reopen_requires_inactive_desktop_and_known_capacity(
+    migrated_db, goal_setup, activity
+):
     owner, server, ticket, opened, clock = goal_setup
     await owner._claim(ticket)
     await owner.goal_observer.opened(ticket)

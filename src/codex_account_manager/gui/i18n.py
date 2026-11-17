@@ -80,6 +80,19 @@ EN = {
 }
 
 TR = {
+    "Shut down if the goal stays blocked for {minutes} minutes": "Hedef {minutes} dakika engellenmiş kalırsa kapat",
+    "Set a maximum runtime": "Azami çalışma süresi belirle",
+    "Maximum runtime (minutes)": "Azami çalışma süresi (dakika)",
+    "Maximum runtime": "Azami çalışma süresi",
+    "Blocked goal": "Engellenen hedef",
+    "{minutes} min": "{minutes} dk",
+    "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.": "Seçili hedef {minutes} dakika engellenmiş kalırsa ve Codex boşta ise 2 dakikalık kapatma geri sayımı başlar.",
+    "The selected conversation has no goal. The blocked-goal option does not apply.": "Seçili sohbetin hedefi yok. Engellenen hedef seçeneği uygulanmaz.",
+    "Maximum runtime: {minutes} minutes from confirmation. Windows will shut down even if Codex is still working.": "Azami çalışma süresi: Onaydan itibaren {minutes} dakika. Codex çalışmaya devam etse bile Windows kapanır.",
+    "Goal is blocked. Shutdown countdown starts in about {minutes} minutes if it stays blocked and Codex is idle.": "Hedef engellendi. Hedef engellenmiş kalır ve Codex boşta olursa kapatma geri sayımı yaklaşık {minutes} dakika sonra başlar.",
+    "The selected goal remained blocked.": "Seçili hedef engellenmiş durumda kaldı.",
+    "Maximum runtime ends in {seconds}s. Save your work or cancel.": "Azami çalışma süresi {seconds} sn sonra dolacak. Çalışmanızı kaydedin veya iptal edin.",
+    "Maximum runtime ended. Waiting for the account operation to finish.": "Azami çalışma süresi doldu. Hesap işleminin bitmesi bekleniyor.",
     "Checking whether the goal continuation request started a new turn.": "Hedefi sürdürme isteğinin yeni bir tur başlatıp başlatmadığı kontrol ediliyor.",
     "Warm up all accounts": "Tüm hesapları önceden başlat",
     "After quota resets": "Kota sıfırlandıktan sonra",
