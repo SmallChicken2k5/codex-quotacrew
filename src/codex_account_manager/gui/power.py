@@ -137,9 +137,10 @@ class PowerControls(QFrame):
         work_layout.addWidget(label(tr("Conversation"), "FieldTitle"))
         work_layout.addWidget(self.conversation)
         work_layout.addWidget(self.refresh_button)
-        self.shutdown_if_blocked = QCheckBox(
+        self.shutdown_if_blocked = QCheckBox(tr("Shut down if blocked"))
+        self.shutdown_if_blocked.setToolTip(
             tr(
-                "Shut down if the goal stays blocked for {minutes} minutes",
+                "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.",
                 minutes=BLOCKED_SHUTDOWN_MINUTES,
             )
         )
@@ -205,6 +206,7 @@ class PowerControls(QFrame):
         ):
             row = QHBoxLayout()
             heading = label(tr(key), "Caption")
+            heading.setWordWrap(True)
             value = label("", "FieldTitle")
             value.setWordWrap(True)
             row.addWidget(heading, 1)

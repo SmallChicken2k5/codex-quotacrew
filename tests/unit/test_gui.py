@@ -2657,7 +2657,7 @@ def test_shutdown_summary_and_editing_follow_confirm_and_cancel(window, monkeypa
     assert all(button.isEnabled() for button in widget.presets.values())
 
 
-@pytest.mark.parametrize("locale", ["en", "tr"])
+@pytest.mark.parametrize("locale", ["en", "tr", "pt_BR"])
 @pytest.mark.parametrize("dark", [True, False])
 def test_shutdown_controls_are_reachable_in_small_window(app, locale, dark):
     from PySide6.QtCore import QPoint

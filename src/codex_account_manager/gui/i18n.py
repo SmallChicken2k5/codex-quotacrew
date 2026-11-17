@@ -80,8 +80,8 @@ EN = {
 }
 
 TR = {
-    "Shut down if the goal stays blocked for {minutes} minutes": "Hedef {minutes} dakika engellenmiş kalırsa kapat",
-    "Set a maximum runtime": "Azami çalışma süresi belirle",
+    "Shut down if blocked": "Engellenirse kapat",
+    "Set a maximum runtime": "Süreyi sınırla",
     "Maximum runtime (minutes)": "Azami çalışma süresi (dakika)",
     "Maximum runtime": "Azami çalışma süresi",
     "Blocked goal": "Engellenen hedef",

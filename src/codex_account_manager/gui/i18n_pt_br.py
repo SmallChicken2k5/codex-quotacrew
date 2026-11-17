@@ -1,8 +1,8 @@
 """Brazilian Portuguese translations for the QuotaCrew interface."""
 
 PT_BR: dict[str, str] = {
-    "Shut down if the goal stays blocked for {minutes} minutes": "Desligar se a meta ficar bloqueada por {minutes} minutos",
-    "Set a maximum runtime": "Definir duração máxima",
+    "Shut down if blocked": "Desligar se bloquear",
+    "Set a maximum runtime": "Limitar duração",
     "Maximum runtime (minutes)": "Duração máxima (minutos)",
     "Maximum runtime": "Duração máxima",
     "Blocked goal": "Meta bloqueada",
@@ -37,7 +37,7 @@ PT_BR: dict[str, str] = {
     "No account remains usable because of quota limits": "Nenhuma conta continuar disponível devido aos limites de uso",
     "When time runs out": "Quando o tempo acabar",
     "After your chosen duration": "Após a duração escolhida",
-    "Condition settings": "Configurações da condição",
+    "Condition settings": "Condição",
     "Shutdown duration": "Tempo até desligar",
     "30 min": "30 min",
     "1 hour": "1 hora",
@@ -412,7 +412,7 @@ PT_BR: dict[str, str] = {
     "Shutdown plan": "Plano de desligamento",
     "Shutdown is off.": "Desligamento desativado.",
     "When all accounts are limited": "Quando todas as contas estiverem sem cota",
-    "Cancel shutdown": "Cancelar desligamento",
+    "Cancel shutdown": "Cancelar",
     "For a specific conversation, choose ‘Shut down after this work’ from its actions. Other verified Codex work prevents shutdown.": "Para uma conversa específica, escolha ‘Desligar após este trabalho’ nas ações. Outros trabalhos verificados do Codex impedem o desligamento.",
     "Shut down after this work": "Desligar após este trabalho",
     "Select a verified running conversation first.": "Selecione primeiro uma conversa em execução verificada.",
