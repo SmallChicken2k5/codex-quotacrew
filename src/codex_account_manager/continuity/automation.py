@@ -32,6 +32,7 @@ from codex_account_manager.core.errors import (
     ConnectionNotReadyError,
     ConversationHistoryTooLargeError,
     DesktopContinuationRequired,
+    NativeOperationRejectedError,
     OwnerNotFoundError,
     TransactionError,
 )
@@ -988,8 +989,17 @@ class ContinuationSupervisor:
                 and not ticket.owner_id
                 and stage in {"connection", "desktop", "verification"}
                 and isinstance(exc, AppServerError)
-                and "native channel" in str(exc).casefold()
+                and (
+                    "native channel" in str(exc).casefold()
+                    or (
+                        goal_activation
+                        and stage in {"desktop", "verification"}
+                        and isinstance(exc, NativeOperationRejectedError)
+                    )
+                )
             ):
+                # This was a read before delivery. Keep the pending ticket so the
+                # monitor can retry after the Desktop window finishes initializing.
                 raise ConnectionNotReadyError("Codex Desktop native channel is not ready.") from exc
             if isinstance(exc, AppServerError) and re.search(r"\b401\b", str(exc)):
                 stage = "authentication"

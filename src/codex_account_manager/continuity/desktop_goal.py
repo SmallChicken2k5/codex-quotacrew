@@ -231,10 +231,12 @@ class DesktopGoalObserver:
                 if not matches_desktop_interruption(ticket, turn, goal):
                     return "stopped"
                 if (
-                    (reopen or fallback)
-                    and not ticket.resume_active_goal
-                    and activity == "idle"
+                    not ticket.resume_active_goal
                     and account.ordinary_usage_allowed is True
+                    and (
+                        (reopen and activity in {"idle", "notLoaded"})
+                        or (fallback and activity == "idle")
+                    )
                 ):
                     final_goal = await adapter.get_goal(ticket.thread_id)
                     if (

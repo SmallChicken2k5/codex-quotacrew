@@ -7,7 +7,10 @@ import pytest
 from codex_account_manager.adapters.interfaces import GoalInfo
 from codex_account_manager.continuity import desktop_goal
 from codex_account_manager.continuity.tracking import goal_signature
-from codex_account_manager.core.errors import ConnectionNotReadyError
+from codex_account_manager.core.errors import (
+    ConnectionNotReadyError,
+    NativeOperationRejectedError,
+)
 from codex_account_manager.core.events import bus
 from codex_account_manager.storage.database import connect
 from tests.fakes import account_identity
@@ -315,8 +318,8 @@ async def test_stop_before_observer_starts_is_scoped(migrated_db, goal_setup, sc
     assert not opened
 
 
-@pytest.mark.parametrize("activity", ["active", "notLoaded", "missing", "unknown_capacity"])
-async def test_reopen_requires_idle_desktop_and_known_capacity(migrated_db, goal_setup, activity):
+@pytest.mark.parametrize("activity", ["active", "missing", "unknown_capacity"])
+async def test_reopen_requires_inactive_desktop_and_known_capacity(migrated_db, goal_setup, activity):
     owner, server, ticket, opened, clock = goal_setup
     await owner._claim(ticket)
     await owner.goal_observer.opened(ticket)
@@ -326,9 +329,7 @@ async def test_reopen_requires_idle_desktop_and_known_capacity(migrated_db, goal
         with pytest.raises(ConnectionNotReadyError):
             await owner.goal_observer._probe(ticket, reopen=True)
     else:
-        owner.native.thread_status.return_value = (
-            activity if activity in {"active", "notLoaded"} else "idle"
-        )
+        owner.native.thread_status.return_value = "active" if activity == "active" else "idle"
         if activity == "unknown_capacity":
             snapshot = await server.read_account()
             server.read_account = AsyncMock(
@@ -337,6 +338,47 @@ async def test_reopen_requires_idle_desktop_and_known_capacity(migrated_db, goal
         await owner.goal_observer._probe(ticket, reopen=True)
     assert not opened
     assert await journal_status() == ("goal_opened",)
+
+
+async def test_unloaded_goal_reopens_without_sending_until_loaded(migrated_db, goal_setup):
+    owner, _server, ticket, opened, clock = goal_setup
+    owner.native.thread_status.return_value = "notLoaded"
+    await owner._claim(ticket)
+    await owner.goal_observer.opened(ticket)
+    clock[0] += 15
+
+    assert await owner.goal_observer._probe(ticket, reopen=True) == "waiting"
+    assert opened == [ticket.thread_id]
+    assert await journal_status() == ("goal_reopened",)
+
+    clock[0] += 20
+    assert await owner.goal_observer._probe(ticket, reopen=False, fallback=True) == "waiting"
+    assert await journal_status() == ("goal_reopened",)
+    owner.native.send.assert_not_awaited()
+
+
+async def test_goal_recovers_after_desktop_rejects_preflight_read(migrated_db, goal_setup):
+    owner, server, ticket, opened, _clock = goal_setup
+    owner.native.thread_status.side_effect = NativeOperationRejectedError("Desktop rejected read")
+    await owner.save_pending([ticket])
+    owner.launch_batch([ticket])
+    await asyncio.gather(*tuple(owner.tasks))
+    assert not opened
+    assert await journal_status() is None
+
+    async def activity(_thread_id):
+        if opened:
+            server.latest = {"id": "next", "status": "inProgress"}
+            return "active"
+        return "notLoaded"
+
+    owner.native.thread_status.side_effect = activity
+    await owner.recover_pending(ticket.owner_key)
+    await asyncio.gather(*tuple(owner.tasks))
+    await finish(owner)
+    assert opened == [ticket.thread_id]
+    assert await journal_status() == ("goal_resumed",)
+    owner.native.send.assert_not_awaited()
 
 
 async def test_goal_wait_does_not_block_another_desktop_ticket(migrated_db, goal_setup):
