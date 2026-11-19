@@ -81,6 +81,9 @@ EN = {
 
 TR = {
     "Include in automatic switching": "Otomatik geçişe dahil et",
+    "Include {account} in automatic switching": "{account} hesabını otomatik geçişe dahil et",
+    "Auto-switch": "Oto. geçiş",
+    "{count} in auto-switch": "{count} hesap otomatik geçişte",
     "This account is excluded from automatic switching.": "Bu hesap otomatik geçişe dahil değil.",
     "The target account changed before switching.": "Hedef hesap geçişten önce değişti.",
     "This saved account no longer exists.": "Bu kayıtlı hesap artık mevcut değil.",

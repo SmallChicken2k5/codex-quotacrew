@@ -38,6 +38,7 @@ from codex_account_manager.gui.widgets import label
 
 class AccountsView(BaseView):
     auto_switch_changed = Signal(str, bool)
+    auto_switch_pending = Signal(str, object)
 
     def __init__(self, runner: AsyncRunner, accounts: AccountService, palette=DARK):
         super().__init__(palette)
@@ -48,7 +49,6 @@ class AccountsView(BaseView):
         self._loaded = False
         self._menu_buttons: list[QToolButton] = []
         self._profiles: list[Profile | ProfileHealth] = []
-        self._auto_switch_pending: set[str] = set()
         self._sort_mode = "name"
         self._reveal_profile_id: str | None = None
 
@@ -92,6 +92,7 @@ class AccountsView(BaseView):
         panel_layout.addWidget(self.controls)
         self.controls.hide()
         self.table = AccountTable(palette)
+        self.table.auto_switch_requested.connect(self.set_auto_switch_enabled)
         self.table.sort_requested.connect(self._sort_column)
         self.table.set_sort(self._sort_mode)
         panel_layout.addWidget(self.table, 1)
@@ -217,14 +218,6 @@ class AccountsView(BaseView):
 
     def _profile_menu(self, profile: ProfileHealth, button: QToolButton) -> QMenu:
         menu = QMenu(button)
-        auto_switch = menu.addAction(tr("Include in automatic switching"))
-        auto_switch.setCheckable(True)
-        auto_switch.setChecked(profile.auto_switch_enabled)
-        auto_switch.setEnabled(profile.profile_id not in self._auto_switch_pending)
-        auto_switch.triggered.connect(
-            lambda enabled: self._set_auto_switch_enabled(profile.profile_id, enabled)
-        )
-        menu.addSeparator()
         alias = profile.alias
         for title, handler in (
             ("Sign in", self._login),
@@ -240,14 +233,17 @@ class AccountsView(BaseView):
             )
         return menu
 
-    def _set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> None:
-        if profile_id in self._auto_switch_pending:
+    def set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> None:
+        if profile_id in self.table.pending_auto_switch:
             return
-        self._auto_switch_pending.add(profile_id)
-        self._filter()
+        self.table.set_auto_switch_pending(profile_id, enabled)
+        self.auto_switch_pending.emit(profile_id, enabled)
+
+        def finish() -> None:
+            self.table.set_auto_switch_pending(profile_id, None)
+            self.auto_switch_pending.emit(profile_id, None)
 
         def saved(_result: None) -> None:
-            self._auto_switch_pending.discard(profile_id)
             for index, profile in enumerate(self._profiles):
                 saved_id = profile.profile_id if isinstance(profile, ProfileHealth) else profile.id
                 if saved_id == profile_id:
@@ -257,12 +253,13 @@ class AccountsView(BaseView):
                         else profile.model_copy(update={"auto_switch_enabled": enabled})
                     )
                     break
+            self.controls.set_summary([display_health(profile) for profile in self._profiles])
             self._filter()
             self.auto_switch_changed.emit(profile_id, enabled)
+            finish()
 
         def failed(error: Exception) -> None:
-            self._auto_switch_pending.discard(profile_id)
-            self._filter()
+            finish()
             QMessageBox.warning(self, tr("Operation failed"), error_message(str(error)))
 
         self.runner.submit(

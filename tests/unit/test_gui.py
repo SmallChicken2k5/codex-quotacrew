@@ -1740,7 +1740,7 @@ def test_shutdown_status_and_cancel_are_visible_in_tray(window):
     assert "Shutting down" not in window.tray.toolTip()
 
 
-@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("language", ["en", "tr", "pt_BR"])
 @pytest.mark.parametrize("dark", [True, False])
 def test_compact_account_rows_keep_quota_columns_aligned(app, language, dark):
     from dataclasses import replace
@@ -1797,6 +1797,9 @@ def test_compact_account_rows_keep_quota_columns_aligned(app, language, dark):
             assert (
                 abs(status.mapTo(row, status.rect().center()).y() - row.rect().center().y()) <= 12
             )
+            assert row.auto_switch.isVisibleTo(window)
+            assert row._action_host.rect().contains(row.auto_switch.geometry())
+            assert row.auto_switch.geometry().right() < row._switch_btn.geometry().left()
             assert row._switch_btn.isVisibleTo(window) or not row._switch_btn.isEnabled()
             if row._switch_btn.isVisibleTo(window):
                 assert row._switch_btn.parentWidget().rect().contains(row._switch_btn.geometry())
@@ -1805,9 +1808,12 @@ def test_compact_account_rows_keep_quota_columns_aligned(app, language, dark):
             area.horizontalScrollBar().maximum() == 0
             for area in window.dashboard.findChildren(QScrollArea)
         )
-        headings = [button for button, _title in window.dashboard._header_buttons.values()]
+        headings = [
+            *(button for button, _title in window.dashboard._header_buttons.values()),
+            window.dashboard.account_table.actions_heading,
+        ]
         first = rows[0]
-        cells = [first._identity, *first._usage_cells, first._status_host]
+        cells = [first._identity, *first._usage_cells, first._status_host, first._action_host]
         for heading, cell in zip(headings, cells, strict=True):
             assert (
                 abs(
@@ -1940,12 +1946,12 @@ def test_header_sort_does_not_change_next_candidate(window):
     assert all(row._candidate.isHidden() for row in view._account_rows.values())
 
 
-async def test_my_accounts_toggle_updates_pool_and_preserves_manual_switch(
+async def test_visible_account_switches_share_pool_state_and_preserve_manual_switch(
     window, migrated_db, monkeypatch
 ):
     from dataclasses import replace
 
-    from PySide6.QtWidgets import QLabel, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     from codex_account_manager.core.errors import OperationBusyError
     from codex_account_manager.core.operation_lock import OperationLock
@@ -1965,45 +1971,52 @@ async def test_my_accounts_toggle_updates_pool_and_preserves_manual_switch(
     monkeypatch.setattr(view.runner, "submit", lambda *args: submitted.append(args))
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
 
-    def toggle():
-        return next(
-            action
-            for action in view.table.rows["Studio"]._switch_btn.menu().actions()
-            if action.text() == "Include in automatic switching"
-        )
+    def accounts_toggle():
+        return view.table.rows["Studio"].auto_switch
 
-    assert toggle().isChecked()
-    toggle().trigger()
-    assert not toggle().isEnabled()
+    def overview_toggle():
+        return dashboard.account_table.rows["Studio"].auto_switch
+
+    assert accounts_toggle().isChecked() and overview_toggle().isChecked()
+    assert "4 in auto-switch" in view.summary.text()
+    assert "4 in auto-switch" in dashboard.summary.text()
+
+    overview_toggle().click()
+    assert not accounts_toggle().isEnabled() and not overview_toggle().isEnabled()
+    assert not accounts_toggle().isChecked() and not overview_toggle().isChecked()
+    assert view.table.rows["Personal"].auto_switch.isEnabled()
     coro, _saved, failed = submitted.pop()
     with OperationLock(migrated_db.data_dir / "account-operation.lock"):
         with pytest.raises(OperationBusyError) as busy:
             await coro
     failed(busy.value)
-    assert toggle().isChecked() and toggle().isEnabled()
+    assert accounts_toggle().isChecked() and accounts_toggle().isEnabled()
+    assert overview_toggle().isChecked() and overview_toggle().isEnabled()
     assert len(warnings) == 1
 
-    toggle().trigger()
+    overview_toggle().click()
+    view._render(profiles)
+    dashboard._render(profiles)
+    assert not accounts_toggle().isEnabled() and not overview_toggle().isEnabled()
     coro, saved, _failed = submitted.pop()
     saved(await coro)
-    assert not toggle().isChecked() and toggle().isEnabled()
+    assert not accounts_toggle().isChecked() and accounts_toggle().isEnabled()
+    assert not overview_toggle().isChecked() and overview_toggle().isEnabled()
+    assert "3 in auto-switch" in view.summary.text()
+    assert "3 in auto-switch" in dashboard.summary.text()
     assert not (await ProfileRepository().get_by_alias("Studio")).auto_switch_enabled
     row = dashboard._account_rows["Studio"]
     assert row._candidate.isHidden()
-    assert any(
-        label.text() == "This account is excluded from automatic switching."
-        for label in row.findChildren(QLabel)
-    )
     assert any(
         action.isEnabled() and action.text() == "Switch account"
         for action in row._switch_btn.menu().actions()
     )
     assert row._primary_usage._value.text() != "—"
 
-    toggle().trigger()
+    accounts_toggle().click()
     coro, saved, _failed = submitted.pop()
     saved(await coro)
-    assert toggle().isChecked()
+    assert accounts_toggle().isChecked() and overview_toggle().isChecked()
     assert (await ProfileRepository().get_by_alias("Studio")).auto_switch_enabled
     assert not dashboard._account_rows["Studio"]._candidate.isHidden()
 

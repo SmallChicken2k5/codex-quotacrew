@@ -2,6 +2,9 @@
 
 PT_BR: dict[str, str] = {
     "Include in automatic switching": "Incluir na troca automática",
+    "Include {account} in automatic switching": "Incluir {account} na troca automática",
+    "Auto-switch": "Troca auto.",
+    "{count} in auto-switch": "{count} na troca automática",
     "This account is excluded from automatic switching.": "Esta conta está excluída da troca automática.",
     "The target account changed before switching.": "A conta de destino mudou antes da troca.",
     "This saved account no longer exists.": "Esta conta salva não existe mais.",

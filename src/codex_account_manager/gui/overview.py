@@ -227,6 +227,7 @@ class DashboardView(BaseView):
         for index, health in enumerate(self._health):
             if health.profile_id == profile_id:
                 self._health[index] = replace(health, auto_switch_enabled=enabled)
+                self.controls.set_summary(self._health)
                 self._filter()
                 break
 

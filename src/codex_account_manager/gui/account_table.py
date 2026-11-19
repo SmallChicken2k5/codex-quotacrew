@@ -106,6 +106,7 @@ def display_health(profile: Profile | ProfileHealth) -> ProfileHealth:
 
 class AccountTable(QWidget):
     sort_requested = Signal(tuple)
+    auto_switch_requested = Signal(str, bool)
 
     HEADINGS = (
         ("Account", ("name", "name_desc")),
@@ -119,6 +120,7 @@ class AccountTable(QWidget):
         self.setObjectName("AccountTable")
         self.palette_ = palette
         self.rows: dict[str, AccountRow] = {}
+        self.pending_auto_switch: dict[str, bool] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
@@ -144,7 +146,8 @@ class AccountTable(QWidget):
             self._headers.addWidget(cell, 0, column)
             self._header_cells.append(cell)
             self.header_buttons[modes] = (button, title)
-        self.actions_heading = label(tr("Menu"), "TableColumn")
+        self.actions_heading = label(tr("Auto-switch"), "TableColumn")
+        self.actions_heading.setToolTip(tr("Include in automatic switching"))
         self._headers.addWidget(self.actions_heading, 0, 4, Qt.AlignmentFlag.AlignLeft)
         self._header_cells.append(self.actions_heading)
         layout.addWidget(self.header)
@@ -191,6 +194,16 @@ class AccountTable(QWidget):
         self.header.hide()
         self._grid.addWidget(widget, 0, 0, 1, 2, Qt.AlignmentFlag.AlignTop)
 
+    def set_auto_switch_pending(self, profile_id: str, requested: bool | None) -> None:
+        if requested is None:
+            self.pending_auto_switch.pop(profile_id, None)
+        else:
+            self.pending_auto_switch[profile_id] = requested
+        for row in self.rows.values():
+            if row.profile_id == profile_id:
+                row.set_auto_switch_pending(requested)
+                break
+
     def set_profiles(
         self,
         profiles: list[ProfileHealth],
@@ -208,6 +221,8 @@ class AccountTable(QWidget):
         self.header.setVisible(bool(profiles))
         for index, profile in enumerate(profiles):
             row = AccountRow(profile, self.palette_)
+            row.set_auto_switch_pending(self.pending_auto_switch.get(profile.profile_id))
+            row.auto_switch_requested.connect(self.auto_switch_requested.emit)
             if on_switch is not None:
                 row.switch_requested.connect(on_switch)
             if on_sign_in is not None:
@@ -406,4 +421,6 @@ class AccountControls(QWidget):
                 ready=ready,
                 attention=len(health) - ready,
             )
+            + " · "
+            + tr("{count} in auto-switch", count=sum(item.auto_switch_enabled for item in health))
         )

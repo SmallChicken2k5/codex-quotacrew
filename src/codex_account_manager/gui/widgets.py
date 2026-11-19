@@ -234,12 +234,15 @@ class AccountRow(QFrame):
     sign_in_requested = Signal()
     refresh_requested = Signal()
     manage_requested = Signal()
+    auto_switch_requested = Signal(str, bool)
 
     def __init__(self, health: ProfileHealth, palette: Palette = DARK):
         super().__init__()
         self.setObjectName("AccountRow")
         self.setProperty("active", "true" if health.is_active else "false")
         self.alias = health.alias
+        self.profile_id = health.profile_id
+        self._auto_switch_enabled = health.auto_switch_enabled
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(88)
 
@@ -341,7 +344,13 @@ class AccountRow(QFrame):
         from codex_account_manager.continuity.policy import automatic_exclusion_reason
 
         exclusion = automatic_exclusion_reason(health)
-        if exclusion and not health.error and not health.stale and health.account_match is True:
+        if (
+            exclusion
+            and health.auto_switch_enabled
+            and not health.error
+            and not health.stale
+            and health.account_match is True
+        ):
             candidate_hint = label(tr(exclusion), "Caption")
             candidate_hint.setWordWrap(True)
             root.addWidget(candidate_hint, 2, 0, 1, 5)
@@ -394,6 +403,16 @@ class AccountRow(QFrame):
         self._action_host = QWidget()
         actions = QHBoxLayout(self._action_host)
         actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(4)
+        self.auto_switch = CompactSwitch(
+            tr("Include {account} in automatic switching", account=self.alias)
+        )
+        self.auto_switch.setToolTip(tr("Include in automatic switching"))
+        self.auto_switch.setChecked(self._auto_switch_enabled)
+        self.auto_switch.clicked.connect(
+            lambda enabled: self.auto_switch_requested.emit(self.profile_id, enabled)
+        )
+        actions.addWidget(self.auto_switch)
         self._switch_btn = QToolButton()
         self._switch_btn.setObjectName("RowMenu")
         self._switch_btn.setIcon(make_icon("more", palette.muted, 24))
@@ -434,6 +453,10 @@ class AccountRow(QFrame):
             notice.setWordWrap(True)
             root.addWidget(notice, 1, 0, 1, 5)
             self.setToolTip(explanation)
+
+    def set_auto_switch_pending(self, requested: bool | None) -> None:
+        self.auto_switch.setChecked(self._auto_switch_enabled if requested is None else requested)
+        self.auto_switch.setEnabled(requested is None)
 
     def set_column_widths(self, widths: tuple[int, int, int, int, int]) -> None:
         identity, five_hour, weekly, status, actions = widths
