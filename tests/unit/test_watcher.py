@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from codex_account_manager.continuity.policy import resolve_policy
 from codex_account_manager.core.events import bus
 from codex_account_manager.domain.models import ProfileHealth
@@ -83,6 +85,70 @@ async def test_failed_candidate_recheck_does_not_block_another_available_account
     )
     await watcher.poll_once()
     assert continuity.continued == ["second"]
+
+
+@pytest.mark.parametrize(
+    "kind", [SwitchPolicyKind.AVAILABILITY_FAILOVER, SwitchPolicyKind.SMART_QUOTA]
+)
+async def test_failover_drops_account_disabled_during_fresh_check(kind):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    initial = [
+        _health("source", active=True, allowed=False, quota=QuotaState.LIMITED_NO_RESET),
+        _health("first"),
+        _health("second", secondary=10),
+    ]
+
+    class Accounts(_StubAccounts):
+        async def health(self, alias):
+            item = next(profile for profile in initial if profile.alias == alias)
+            return replace(item, auto_switch_enabled=False) if alias == "first" else item
+
+    continuity = _FakeContinuity()
+    continuity.continue_on_limit = AsyncMock()
+    watcher = Watcher(
+        accounts=Accounts(initial), continuity=continuity, policy=resolve_policy(kind)
+    )
+    health = await watcher.poll_once()
+
+    assert len(health) == 3
+    assert continuity.continue_on_limit.await_args.args == ("second",)
+
+
+async def test_slow_quota_batch_uses_latest_saved_pool_membership(migrated_db, monkeypatch):
+    import asyncio
+    from dataclasses import replace
+
+    from codex_account_manager.accounts.service import AccountService
+
+    accounts = AccountService()
+    profile = await accounts.create_profile("target")
+    reading = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def quota_batch(profiles):
+        reading.set()
+        await finish.wait()
+        return [
+            replace(
+                _health(entry.alias),
+                profile_id=entry.id,
+                auto_switch_enabled=entry.auto_switch_enabled,
+            )
+            for entry in profiles
+        ]
+
+    monkeypatch.setattr(accounts, "_health_batch", quota_batch)
+    refresh = asyncio.create_task(accounts.all_health())
+    await reading.wait()
+    try:
+        await accounts.set_auto_switch_enabled(profile.id, False)
+    finally:
+        finish.set()
+        result = await refresh
+    assert len(result) == 1
+    assert not result[0].auto_switch_enabled
 
 
 async def test_health_finishes_before_pending_worker_launches(migrated_db):

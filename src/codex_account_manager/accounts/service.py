@@ -36,6 +36,7 @@ from codex_account_manager.core.errors import (
     ProfileNotFoundError,
     SignInRequiredError,
 )
+from codex_account_manager.core.events import bus
 from codex_account_manager.core.files import restrict_access
 from codex_account_manager.core.logging import get_logger
 from codex_account_manager.core.operation_lock import OperationLock
@@ -133,6 +134,12 @@ class AccountService:
             await self.profiles.rename(profile.id, _validate_alias(new_alias))
         except sqlite3.IntegrityError as exc:
             raise ValueError("A profile with this name already exists.") from exc
+
+    async def set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> None:
+        with OperationLock(paths.data_dir / "account-operation.lock"):
+            if not await self.profiles.set_auto_switch_enabled(profile_id, enabled):
+                raise ProfileNotFoundError("This saved account no longer exists.")
+        bus.publish("monitor.settings_changed")
 
     async def remove_profile(self, alias: str, *, delete_files: bool = True) -> None:
         profile = await self._require(alias)
@@ -250,7 +257,16 @@ class AccountService:
         self._last_health = {
             key: value for key, value in self._last_health.items() if key in profile_ids
         }
-        return await self._health_batch(profiles)
+        health = await self._health_batch(profiles)
+        if not health:
+            return health
+        # Quota reads can outlast a change made in My accounts.
+        pool = {profile.id: profile.auto_switch_enabled for profile in await self.profiles.list()}
+        return [
+            replace(item, auto_switch_enabled=pool[item.profile_id])
+            for item in health
+            if item.profile_id in pool
+        ]
 
     async def _health_batch(self, profiles: list[Profile]) -> list[ProfileHealth]:
         if not profiles:
@@ -376,6 +392,7 @@ class AccountService:
             health = ProfileHealth(
                 alias=profile.alias,
                 profile_id=profile.id,
+                auto_switch_enabled=profile.auto_switch_enabled,
                 plan_type=snapshot.plan_type if match is True else None,
                 subscription_until=snapshot.subscription_until if match is True else None,
                 subscription_checked_at=snapshot.subscription_checked_at if match is True else None,
@@ -444,6 +461,7 @@ class AccountService:
             return replace(
                 previous,
                 alias=profile.alias,
+                auto_switch_enabled=profile.auto_switch_enabled,
                 stale=True,
                 is_active=profile.identity.matches(active_identity),
                 quota_state=QuotaState.UNKNOWN,
@@ -454,6 +472,7 @@ class AccountService:
         return ProfileHealth(
             alias=profile.alias,
             profile_id=profile.id,
+            auto_switch_enabled=profile.auto_switch_enabled,
             plan_type=None,
             primary_used_percent=None,
             secondary_used_percent=None,

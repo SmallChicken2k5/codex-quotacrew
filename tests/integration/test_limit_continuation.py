@@ -64,6 +64,47 @@ async def _seed_two_profiles(migrated_db, accounts: AccountService):
     return p1, p2
 
 
+@pytest.mark.parametrize("disabled_before_selection", [True, False])
+async def test_handoff_checks_pool_before_activation_and_allows_manual_override(
+    migrated_db, monkeypatch, disabled_before_selection
+):
+    from unittest.mock import AsyncMock
+
+    from codex_account_manager.core.errors import HandoffDeferredError
+    from codex_account_manager.domain.states import HandoffReason
+
+    accounts = AccountService(app_server_factory=_factory("acc-2"))
+    _, target = await _seed_two_profiles(migrated_db, accounts)
+    store = FileCredentialStore(shared_home=migrated_db.shared_codex_home)
+    source_auth = account_auth("acc-1")
+    store.write_active_atomic(source_auth)
+
+    if disabled_before_selection:
+        await accounts.set_auto_switch_enabled(target.id, False)
+
+    async def resolve_active_alias():
+        await accounts.set_auto_switch_enabled(target.id, False)
+        return "ana"
+
+    monkeypatch.setattr(accounts, "resolve_active_alias", resolve_active_alias)
+    service = ContinuityService(accounts=accounts)
+    desktop = FakeDesktop()
+    tx = AuthTransaction(
+        credential_store=store,
+        desktop=desktop,
+        verify_account=AsyncMock(return_value=account_identity("acc-2")),
+    )
+    with pytest.raises(HandoffDeferredError, match="excluded from automatic switching"):
+        await service.handoff(target.alias, reason=HandoffReason.USAGE_LIMITED, transaction=tx)
+
+    assert desktop.stopped == 0
+    assert store.read_active() == source_auth
+    result = await service.handoff(target.alias, transaction=tx)
+    assert result.success and result.account_id == "acc-2"
+    assert desktop.stopped == desktop.launched == 1
+    assert store.read_active() == account_auth("acc-2")
+
+
 @pytest.mark.parametrize("same_supervisor", [False, True])
 @pytest.mark.parametrize("auto_continue", [False, True])
 async def test_manual_switch_stops_other_supervisor_without_clearing_tracking(

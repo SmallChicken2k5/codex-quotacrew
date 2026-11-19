@@ -32,6 +32,7 @@ class Profile(BaseModel):
     bound_account_id: str | None = None
     bound_user_id: str | None = Field(default=None, repr=False)
     created_at: datetime = Field(default_factory=_now)
+    auto_switch_enabled: bool = True
 
     @property
     def identity(self) -> AccountIdentity:
@@ -110,6 +111,7 @@ class ProfileHealth:
     primary_window_minutes: int | None = None
     secondary_window_minutes: int | None = None
     identity: AccountIdentity | None = None
+    auto_switch_enabled: bool = True
 
 
 @dataclass(frozen=True)

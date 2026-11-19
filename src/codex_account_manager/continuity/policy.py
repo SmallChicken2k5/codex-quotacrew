@@ -16,6 +16,8 @@ AUTOMATIC_PLANS = frozenset({"plus", "pro", "team", "business", "enterprise", "e
 
 
 def automatic_exclusion_reason(h: ProfileHealth) -> str | None:
+    if not h.auto_switch_enabled:
+        return "This account is excluded from automatic switching."
     plan = h.plan_type.strip().casefold() if isinstance(h.plan_type, str) else ""
     if plan == "free":
         return (

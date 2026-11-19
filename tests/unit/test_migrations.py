@@ -118,12 +118,51 @@ async def test_migrate_repairs_missing_settings_table(tmp_paths):
     assert con.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 1
 
 
+async def test_auto_switch_migration_defaults_to_enabled_and_persists_by_profile_id(
+    tmp_paths, monkeypatch
+):
+    from codex_account_manager.accounts.service import AccountService
+    from codex_account_manager.core.errors import ProfileNotFoundError
+    from codex_account_manager.storage import migrations
+    from codex_account_manager.storage.repositories import ProfileRepository
+
+    with monkeypatch.context() as old_schema:
+        old_schema.setattr(migrations, "MIGRATIONS", migrations.MIGRATIONS[:10])
+        old_schema.setattr(migrations, "TARGET_VERSION", 10)
+        assert await migrate() == 10
+    with sqlite3.connect(tmp_paths.db_path) as db:
+        db.execute("INSERT INTO profiles VALUES ('p1','work','home','2026-01-01')")
+    db.close()
+
+    assert await migrate() == TARGET_VERSION
+    accounts = AccountService()
+    profile = await accounts.profiles.get_by_alias("work")
+    assert profile.auto_switch_enabled
+    await accounts.set_auto_switch_enabled(profile.id, False)
+
+    assert await migrate() == TARGET_VERSION
+    await accounts.rename_profile("work", "Renamed")
+    reopened = ProfileRepository()
+    assert not (await reopened.get_by_alias("Renamed")).auto_switch_enabled
+    assert not (await reopened.list())[0].auto_switch_enabled
+
+    await accounts.remove_profile("Renamed", delete_files=False)
+    replacement = await accounts.create_profile("Renamed")
+    assert replacement.id != profile.id and replacement.auto_switch_enabled
+    with pytest.raises(ProfileNotFoundError):
+        await accounts.set_auto_switch_enabled(profile.id, False)
+    assert (await reopened.get_by_alias("Renamed")).auto_switch_enabled
+
+
 async def test_forward_migration_preserves_data_and_releases_backup(tmp_paths, monkeypatch):
     import codex_account_manager.storage.migrations as module
 
     await migrate()
     with sqlite3.connect(tmp_paths.db_path) as con:
-        con.execute("INSERT INTO profiles VALUES ('p1','work','home','2026-01-01')")
+        con.execute(
+            "INSERT INTO profiles (id, alias, codex_home, created_at) "
+            "VALUES ('p1','work','home','2026-01-01')"
+        )
     con.close()
 
     async def next_schema(db):
@@ -238,7 +277,10 @@ async def test_empty_catalogue_with_signins_is_not_migrated(tmp_paths):
 async def test_existing_accounts_and_signins_survive_startup(tmp_paths):
     await migrate()
     with sqlite3.connect(tmp_paths.db_path) as db:
-        db.execute("INSERT INTO profiles VALUES ('saved','work','home','2026-01-01')")
+        db.execute(
+            "INSERT INTO profiles (id, alias, codex_home, created_at) "
+            "VALUES ('saved','work','home','2026-01-01')"
+        )
     db.close()
     auth = tmp_paths.profiles_dir / "saved" / "auth.json"
     auth.parent.mkdir()

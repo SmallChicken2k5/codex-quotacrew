@@ -289,6 +289,16 @@ async def _profile_user_identity(db: aiosqlite.Connection) -> None:
         ON profile_accounts(account_id) WHERE user_id IS NULL""")
 
 
+async def _profile_auto_switch(db: aiosqlite.Connection) -> None:
+    columns = await (await db.execute("PRAGMA table_info(profiles)")).fetchall()
+    if any(column[1] == "auto_switch_enabled" for column in columns):
+        return
+    await db.execute(
+        "ALTER TABLE profiles ADD COLUMN auto_switch_enabled INTEGER NOT NULL DEFAULT 1 "
+        "CHECK (auto_switch_enabled IN (0, 1))"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "initial application schema", _initial_schema),
     Migration(2, "durable automatic continuation attempts", _create_continuation_attempts),
@@ -300,6 +310,7 @@ MIGRATIONS: list[Migration] = [
     Migration(8, "remember conversations awaiting revalidation", _unavailable_work_state),
     Migration(9, "preserve manually handed off active goals", _manual_goal_intent),
     Migration(10, "distinguish users within a workspace", _profile_user_identity),
+    Migration(11, "configure automatic switching per profile", _profile_auto_switch),
 ]
 
 TARGET_VERSION = MIGRATIONS[-1].version

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
@@ -25,9 +26,7 @@ from codex_account_manager.gui.account_table import (
 from codex_account_manager.gui.async_runner import AsyncRunner
 from codex_account_manager.gui.design import DARK, set_button_icon
 from codex_account_manager.gui.dialogs import prompt_text
-from codex_account_manager.gui.i18n import (
-    tr,
-)
+from codex_account_manager.gui.i18n import error_message, tr
 from codex_account_manager.gui.view_base import (
     BaseView,
     EmptyState,
@@ -38,6 +37,8 @@ from codex_account_manager.gui.widgets import label
 
 
 class AccountsView(BaseView):
+    auto_switch_changed = Signal(str, bool)
+
     def __init__(self, runner: AsyncRunner, accounts: AccountService, palette=DARK):
         super().__init__(palette)
         self.runner = runner
@@ -47,6 +48,7 @@ class AccountsView(BaseView):
         self._loaded = False
         self._menu_buttons: list[QToolButton] = []
         self._profiles: list[Profile | ProfileHealth] = []
+        self._auto_switch_pending: set[str] = set()
         self._sort_mode = "name"
         self._reveal_profile_id: str | None = None
 
@@ -125,7 +127,7 @@ class AccountsView(BaseView):
         self._busy = False
         self.set_loading("accounts", False)
         self._loaded = True
-        self._profiles = profiles
+        self._profiles = list(profiles)
         if not self._login_busy:
             self.operation_status.clear()
         self.operation_status.setVisible(bool(self.operation_status.text()))
@@ -213,8 +215,17 @@ class AccountsView(BaseView):
         self._menu_buttons = [row._switch_btn for row in self.table.rows.values()]
         self._set_actions_enabled(not self._login_busy)
 
-    def _profile_menu(self, alias: str, button: QToolButton) -> QMenu:
+    def _profile_menu(self, profile: ProfileHealth, button: QToolButton) -> QMenu:
         menu = QMenu(button)
+        auto_switch = menu.addAction(tr("Include in automatic switching"))
+        auto_switch.setCheckable(True)
+        auto_switch.setChecked(profile.auto_switch_enabled)
+        auto_switch.setEnabled(profile.profile_id not in self._auto_switch_pending)
+        auto_switch.triggered.connect(
+            lambda enabled: self._set_auto_switch_enabled(profile.profile_id, enabled)
+        )
+        menu.addSeparator()
+        alias = profile.alias
         for title, handler in (
             ("Sign in", self._login),
             ("Rename", self._rename),
@@ -228,6 +239,35 @@ class AccountsView(BaseView):
                 lambda _checked=False, account=alias, command=handler: command(account)
             )
         return menu
+
+    def _set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> None:
+        if profile_id in self._auto_switch_pending:
+            return
+        self._auto_switch_pending.add(profile_id)
+        self._filter()
+
+        def saved(_result: None) -> None:
+            self._auto_switch_pending.discard(profile_id)
+            for index, profile in enumerate(self._profiles):
+                saved_id = profile.profile_id if isinstance(profile, ProfileHealth) else profile.id
+                if saved_id == profile_id:
+                    self._profiles[index] = (
+                        replace(profile, auto_switch_enabled=enabled)
+                        if isinstance(profile, ProfileHealth)
+                        else profile.model_copy(update={"auto_switch_enabled": enabled})
+                    )
+                    break
+            self._filter()
+            self.auto_switch_changed.emit(profile_id, enabled)
+
+        def failed(error: Exception) -> None:
+            self._auto_switch_pending.discard(profile_id)
+            self._filter()
+            QMessageBox.warning(self, tr("Operation failed"), error_message(str(error)))
+
+        self.runner.submit(
+            self.accounts.set_auto_switch_enabled(profile_id, enabled), saved, failed
+        )
 
     def _set_actions_enabled(self, enabled: bool) -> None:
         self.add_button.setEnabled(enabled)
@@ -289,8 +329,6 @@ class AccountsView(BaseView):
         )
         self.operation_status.show()
         self._set_actions_enabled(True)
-        from codex_account_manager.gui.i18n import error_message
-
         QMessageBox.warning(self, tr("Operation failed"), error_message(str(error)))
         self.refresh()
 

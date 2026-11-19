@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -209,7 +210,7 @@ class DashboardView(BaseView):
         self._loaded = True
         self._load_error = None
         self.alert.hide()
-        self._health = health
+        self._health = list(health)
         for widget in (self.summary, self.hero, self.toolbar_host):
             widget.setVisible(bool(health))
         self.controls.set_summary(health)
@@ -221,6 +222,13 @@ class DashboardView(BaseView):
             )
         )
         self._filter()
+
+    def set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> None:
+        for index, health in enumerate(self._health):
+            if health.profile_id == profile_id:
+                self._health[index] = replace(health, auto_switch_enabled=enabled)
+                self._filter()
+                break
 
     def _filter(self, _text: str = "") -> None:
         self.account_table.palette_ = self.palette_

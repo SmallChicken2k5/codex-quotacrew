@@ -31,7 +31,8 @@ class ProfileRepository:
         async with connect() as db:
             cursor = await db.execute(
                 """
-                SELECT p.id, p.alias, p.codex_home, pa.account_id, p.created_at, pa.user_id
+                SELECT p.id, p.alias, p.codex_home, pa.account_id, p.created_at, pa.user_id,
+                       p.auto_switch_enabled
                 FROM profiles p
                 LEFT JOIN profile_accounts pa ON pa.profile_id = p.id
                 ORDER BY p.created_at
@@ -44,7 +45,8 @@ class ProfileRepository:
         async with connect() as db:
             cursor = await db.execute(
                 """
-                SELECT p.id, p.alias, p.codex_home, pa.account_id, p.created_at, pa.user_id
+                SELECT p.id, p.alias, p.codex_home, pa.account_id, p.created_at, pa.user_id,
+                       p.auto_switch_enabled
                 FROM profiles p
                 LEFT JOIN profile_accounts pa ON pa.profile_id = p.id
                 WHERE p.alias = ?
@@ -57,8 +59,15 @@ class ProfileRepository:
     async def create(self, profile: Profile) -> None:
         async with connect() as db:
             await db.execute(
-                "INSERT INTO profiles (id, alias, codex_home, created_at) VALUES (?, ?, ?, ?)",
-                (profile.id, profile.alias, profile.codex_home, profile.created_at.isoformat()),
+                "INSERT INTO profiles (id, alias, codex_home, created_at, auto_switch_enabled) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    profile.id,
+                    profile.alias,
+                    profile.codex_home,
+                    profile.created_at.isoformat(),
+                    profile.auto_switch_enabled,
+                ),
             )
             await db.commit()
 
@@ -66,6 +75,14 @@ class ProfileRepository:
         async with connect() as db:
             await db.execute("UPDATE profiles SET alias = ? WHERE id = ?", (new_alias, profile_id))
             await db.commit()
+
+    async def set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> bool:
+        async with connect() as db:
+            cursor = await db.execute(
+                "UPDATE profiles SET auto_switch_enabled = ? WHERE id = ?", (enabled, profile_id)
+            )
+            await db.commit()
+            return cursor.rowcount == 1
 
     async def delete(self, profile_id: str) -> None:
         async with connect() as db:
@@ -108,6 +125,7 @@ class ProfileRepository:
             bound_account_id=row[3],
             created_at=datetime.fromisoformat(row[4]),
             bound_user_id=row[5],
+            auto_switch_enabled=bool(row[6]),
         )
 
     async def upgrade_legacy_identity(self, profile: Profile, identity: AccountIdentity) -> bool:

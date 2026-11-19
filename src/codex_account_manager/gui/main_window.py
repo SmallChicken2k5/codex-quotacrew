@@ -290,6 +290,7 @@ class MainWindow(QMainWindow):
         self.conversations.work_changed.connect(self._work_changed)
         self.conversations.tracking_reset.connect(self._tracking_reset)
         self.accounts_view = AccountsView(self.runner, self.accounts)
+        self.accounts_view.auto_switch_changed.connect(self.dashboard.set_auto_switch_enabled)
         self.activity = ActivityView(self.runner)
         self.power_view = PowerView(self.runner, self.accounts)
         self.goals = GoalsView(self.runner)

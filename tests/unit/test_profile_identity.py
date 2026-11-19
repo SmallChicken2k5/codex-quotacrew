@@ -145,17 +145,17 @@ async def schema_nine(tmp_paths, monkeypatch):
 
 
 async def test_upgrade_preserves_legacy_binding_delivery_and_settings(tmp_paths, monkeypatch):
-    from codex_account_manager.storage.migrations import migrate
+    from codex_account_manager.storage.migrations import TARGET_VERSION, migrate
 
     await schema_nine(tmp_paths, monkeypatch)
-    assert await migrate() == 10
-    assert await migrate() == 10
+    assert await migrate() == TARGET_VERSION
+    assert await migrate() == TARGET_VERSION
     with sqlite3.connect(tmp_paths.db_path) as db:
         assert db.execute("SELECT * FROM profile_accounts").fetchall() == [
             ("P1", "W1", "2026-01-02", None)
         ]
         assert db.execute("SELECT * FROM profiles").fetchall() == [
-            ("P1", "legacy", "home", "2026-01-01")
+            ("P1", "legacy", "home", "2026-01-01", 1)
         ]
         assert db.execute("SELECT value FROM settings WHERE key='preference'").fetchone() == (
             "keep",
@@ -203,7 +203,7 @@ async def test_failed_identity_migration_preserves_original_table(tmp_paths, mon
         assert not db.execute(
             "SELECT name FROM sqlite_master WHERE name='profile_accounts_identity'"
         ).fetchall()
-    assert await module.migrate() == 10
+    assert await module.migrate() == module.TARGET_VERSION
 
 
 async def test_four_team_users_bind_independently_and_duplicate_owner_is_rejected(migrated_db):

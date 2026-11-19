@@ -1940,6 +1940,74 @@ def test_header_sort_does_not_change_next_candidate(window):
     assert all(row._candidate.isHidden() for row in view._account_rows.values())
 
 
+async def test_my_accounts_toggle_updates_pool_and_preserves_manual_switch(
+    window, migrated_db, monkeypatch
+):
+    from dataclasses import replace
+
+    from PySide6.QtWidgets import QLabel, QMessageBox
+
+    from codex_account_manager.core.errors import OperationBusyError
+    from codex_account_manager.core.operation_lock import OperationLock
+    from codex_account_manager.storage.repositories import ProfileRepository
+
+    profiles = sample_profiles()
+    studio = await window.accounts.create_profile("Studio")
+    profiles[1] = replace(profiles[1], profile_id=studio.id)
+    view = window.accounts_view
+    dashboard = window.dashboard
+    view._render(profiles)
+    dashboard._render(profiles)
+    dashboard.set_automation("availability_failover", True, 60)
+    assert not dashboard._account_rows["Studio"]._candidate.isHidden()
+    submitted = []
+    warnings = []
+    monkeypatch.setattr(view.runner, "submit", lambda *args: submitted.append(args))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
+
+    def toggle():
+        return next(
+            action
+            for action in view.table.rows["Studio"]._switch_btn.menu().actions()
+            if action.text() == "Include in automatic switching"
+        )
+
+    assert toggle().isChecked()
+    toggle().trigger()
+    assert not toggle().isEnabled()
+    coro, _saved, failed = submitted.pop()
+    with OperationLock(migrated_db.data_dir / "account-operation.lock"):
+        with pytest.raises(OperationBusyError) as busy:
+            await coro
+    failed(busy.value)
+    assert toggle().isChecked() and toggle().isEnabled()
+    assert len(warnings) == 1
+
+    toggle().trigger()
+    coro, saved, _failed = submitted.pop()
+    saved(await coro)
+    assert not toggle().isChecked() and toggle().isEnabled()
+    assert not (await ProfileRepository().get_by_alias("Studio")).auto_switch_enabled
+    row = dashboard._account_rows["Studio"]
+    assert row._candidate.isHidden()
+    assert any(
+        label.text() == "This account is excluded from automatic switching."
+        for label in row.findChildren(QLabel)
+    )
+    assert any(
+        action.isEnabled() and action.text() == "Switch account"
+        for action in row._switch_btn.menu().actions()
+    )
+    assert row._primary_usage._value.text() != "—"
+
+    toggle().trigger()
+    coro, saved, _failed = submitted.pop()
+    saved(await coro)
+    assert toggle().isChecked()
+    assert (await ProfileRepository().get_by_alias("Studio")).auto_switch_enabled
+    assert not dashboard._account_rows["Studio"]._candidate.isHidden()
+
+
 def test_stale_candidate_and_unknown_windows_are_not_presented_as_capacity(window):
     from dataclasses import replace
 

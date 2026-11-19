@@ -80,6 +80,10 @@ EN = {
 }
 
 TR = {
+    "Include in automatic switching": "Otomatik geçişe dahil et",
+    "This account is excluded from automatic switching.": "Bu hesap otomatik geçişe dahil değil.",
+    "The target account changed before switching.": "Hedef hesap geçişten önce değişti.",
+    "This saved account no longer exists.": "Bu kayıtlı hesap artık mevcut değil.",
     "Shut down if blocked": "Engellenirse kapat",
     "Set a maximum runtime": "Süreyi sınırla",
     "Maximum runtime (minutes)": "Azami çalışma süresi (dakika)",

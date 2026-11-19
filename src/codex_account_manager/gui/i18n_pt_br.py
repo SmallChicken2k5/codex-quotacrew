@@ -1,6 +1,10 @@
 """Brazilian Portuguese translations for the QuotaCrew interface."""
 
 PT_BR: dict[str, str] = {
+    "Include in automatic switching": "Incluir na troca automática",
+    "This account is excluded from automatic switching.": "Esta conta está excluída da troca automática.",
+    "The target account changed before switching.": "A conta de destino mudou antes da troca.",
+    "This saved account no longer exists.": "Esta conta salva não existe mais.",
     "Shut down if blocked": "Desligar se bloquear",
     "Set a maximum runtime": "Limitar duração",
     "Maximum runtime (minutes)": "Duração máxima (minutos)",

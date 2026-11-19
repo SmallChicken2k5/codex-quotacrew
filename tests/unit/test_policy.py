@@ -113,6 +113,28 @@ def test_automatic_and_suggested_targets_reject_free_or_unknown_capacity(policy,
     assert not policy.decide(current, [uncertain]).should_switch
 
 
+@pytest.mark.parametrize(
+    "policy", [ConfirmPolicy(), AvailabilityFailoverPolicy(), SmartQuotaPolicy()]
+)
+def test_five_member_pool_excludes_better_accounts_and_does_not_fall_back(policy):
+    current = replace(
+        _health("current", active=True, allowed=False, quota=QuotaState.LIMITED_NO_RESET),
+        auto_switch_enabled=False,
+    )
+    pool = [_health(f"pool-{i}", primary=20 + i, secondary=30 + i) for i in range(5)]
+    outside = [replace(_health(f"outside-{i}"), auto_switch_enabled=False) for i in range(2)]
+    candidates = [current, *outside, *pool]
+    assert policy.decide(current, candidates).target == pool[0]
+    assert all(SwitchPolicy._is_available(account) for account in outside)
+
+    limited_pool = [replace(account, quota_state=QuotaState.LIMITED_WITH_RESET) for account in pool]
+    assert not policy.decide(current, [current, *outside, *limited_pool]).should_switch
+    assert not policy.decide(current, [current, *outside]).should_switch
+
+    reenabled = replace(outside[0], auto_switch_enabled=True)
+    assert policy.decide(current, [*candidates, reenabled]).target == reenabled
+
+
 def test_free_remains_manually_usable_and_actual_zero_usage_remains_valid():
     free = replace(_health("free"), plan_type="free")
     assert SwitchPolicy._is_available(free)

@@ -431,6 +431,17 @@ class ContinuityService:
         if reason == HandoffReason.MANUAL:
             bus.publish("continuation.stop")
             await self.automation.stop()
+        elif not target.auto_switch_enabled:
+            raise HandoffDeferredError("This account is excluded from automatic switching.")
+
+        async def verify_automatic_target() -> None:
+            if before_desktop_stop is not None:
+                await before_desktop_stop()
+            current = await self.profiles.get_by_alias(target_alias)
+            if current is None or current.id != target.id:
+                raise HandoffDeferredError("The target account changed before switching.")
+            if not current.auto_switch_enabled:
+                raise HandoffDeferredError("This account is excluded from automatic switching.")
 
         from_alias = await self.accounts.resolve_active_alias()
         from_profile = await self.profiles.get_by_alias(from_alias) if from_alias else None
@@ -460,7 +471,12 @@ class ContinuityService:
             lock_timeout=180 if reason == HandoffReason.MANUAL else 0
         )
         try:
-            result = await tx.switch(target, before_desktop_stop=before_desktop_stop)
+            result = await tx.switch(
+                target,
+                before_desktop_stop=before_desktop_stop
+                if reason == HandoffReason.MANUAL
+                else verify_automatic_target,
+            )
         except (Exception, asyncio.CancelledError) as exc:
             handoff.finished_at = datetime.now(UTC)
             handoff.success = False

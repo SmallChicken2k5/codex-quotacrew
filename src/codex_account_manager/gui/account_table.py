@@ -89,6 +89,7 @@ def display_health(profile: Profile | ProfileHealth) -> ProfileHealth:
     return ProfileHealth(
         alias=profile.alias,
         profile_id=profile.id,
+        auto_switch_enabled=profile.auto_switch_enabled,
         plan_type=None,
         primary_used_percent=None,
         secondary_used_percent=None,
@@ -201,7 +202,7 @@ class AccountTable(QWidget):
         on_sign_in: Callable[[], None] | None = None,
         on_refresh: Callable[[], None] | None = None,
         on_manage: Callable[[], None] | None = None,
-        menu_factory: Callable[[str, QToolButton], QMenu] | None = None,
+        menu_factory: Callable[[ProfileHealth, QToolButton], QMenu] | None = None,
     ) -> None:
         self.clear()
         self.header.setVisible(bool(profiles))
@@ -216,7 +217,7 @@ class AccountTable(QWidget):
             if on_manage is not None:
                 row.manage_requested.connect(on_manage)
             if menu_factory is not None:
-                row._switch_btn.setMenu(menu_factory(profile.alias, row._switch_btn))
+                row._switch_btn.setMenu(menu_factory(profile, row._switch_btn))
             row.set_email_visible(email_visible)
             row.set_candidate(candidate_id == profile.profile_id, confirmation)
             self.rows[profile.alias] = row
