@@ -50,7 +50,11 @@ class NativeOperationRejectedError(AppServerError):
 
 
 class ConnectionNotReadyError(AppServerError):
-    """A read-only owner check timed out before any continuation was sent."""
+    """A read-only owner check could not connect before any continuation was sent."""
+
+
+class IDEPipeNotFoundError(ConnectionNotReadyError):
+    """Opening the local IDE router pipe returned Windows ERROR_FILE_NOT_FOUND."""
 
 
 class OwnerNotFoundError(AppServerError):

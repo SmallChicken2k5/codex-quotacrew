@@ -345,7 +345,7 @@ async def test_owner_transport_timeout_is_retryable_before_delivery(monkeypatch)
         await client.wait_inspect("thread", timeout=0.01)
 
 
-@pytest.mark.parametrize("code", [2, 109, 231, 232, 233])
+@pytest.mark.parametrize("code", [2, 5, 109, 231, 232, 233])
 async def test_windows_channel_reconnect_is_retried_only_for_reads(monkeypatch, code):
     import sys
     import threading
@@ -356,7 +356,7 @@ async def test_windows_channel_reconnect_is_retried_only_for_reads(monkeypatch, 
     import win32file
 
     from codex_account_manager.adapters import native_ide
-    from codex_account_manager.core.errors import ConnectionNotReadyError
+    from codex_account_manager.core.errors import ConnectionNotReadyError, IDEPipeNotFoundError
 
     def unavailable(*args):
         raise pywintypes.error(code, "CreateFile", "private OS details")
@@ -365,6 +365,7 @@ async def test_windows_channel_reconnect_is_retried_only_for_reads(monkeypatch, 
     monkeypatch.setattr(native_ide, "_exchange", ide_exchange)
     with pytest.raises(ConnectionNotReadyError) as caught:
         native_ide._exchange("thread", None, None, threading.Event())
+    assert isinstance(caught.value, IDEPipeNotFoundError) == (code == 2)
     assert "private" not in str(caught.value)
     client = NativeIDE()
     original = client.inspect

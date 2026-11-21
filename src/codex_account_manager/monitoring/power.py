@@ -16,7 +16,7 @@ from codex_account_manager.adapters.native_desktop import NativeDesktop, verifie
 from codex_account_manager.codex.status import normalize_turn_status
 from codex_account_manager.continuity.scan import thread_revision
 from codex_account_manager.continuity.tracking import WorkTracker, goal_signature
-from codex_account_manager.core.errors import OwnerNotFoundError
+from codex_account_manager.core.errors import IDEPipeNotFoundError, OwnerNotFoundError
 from codex_account_manager.core.paths import paths
 from codex_account_manager.domain.models import ProfileHealth
 from codex_account_manager.domain.states import QuotaState
@@ -253,6 +253,10 @@ class PowerChecks:
                     return {**state.turn, "blocked": state.blocked}
                 except OwnerNotFoundError:
                     turn = await adapter.verified_stored_turn(thread_id)
+                except IDEPipeNotFoundError:
+                    turn = await adapter.verified_stored_turn(
+                        thread_id, require_inactive_writer=True
+                    )
             else:
                 turn = await verified_desktop_turn(
                     NativeDesktop(), adapter, thread_id, prefer_stored=True

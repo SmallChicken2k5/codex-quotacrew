@@ -803,8 +803,20 @@ class CodexAppServer:
             raise AppServerError("Could not verify the live conversation state.")
         return {**turn, "status": state}
 
-    async def verified_stored_turn(self, thread_id: str) -> dict | None:
+    async def verified_stored_turn(
+        self, thread_id: str, *, require_inactive_writer: bool = False
+    ) -> dict | None:
         """Corroborate the latest persisted turn with bounded lifecycle metadata."""
+        from codex_account_manager.codex.turn_activity import (
+            read_turn_activity,
+            thread_writer_absent,
+        )
+
+        home = Path(self.codex_home)
+        if require_inactive_writer and not await asyncio.to_thread(
+            thread_writer_absent, home, thread_id
+        ):
+            raise AppServerError("The conversation writer could not be confirmed inactive.")
         turn = await self.latest_turn(thread_id)
         result = await self._request_with_discovery_retry(
             "thread/read", {"threadId": thread_id, "includeTurns": False}
@@ -812,17 +824,26 @@ class CodexAppServer:
         thread = result.get("thread") or {}
         if thread.get("id") != thread_id:
             raise AppServerError("Could not verify the live conversation state.")
-        if thread.get("historyMode") == "paginated":
-            return await self._paginated_turn(thread_id, turn)
+        paginated = thread.get("historyMode") == "paginated"
+        if require_inactive_writer:
+            status = thread.get("status")
+            if not paginated or not isinstance(status, dict) or status.get("type") != "notLoaded":
+                raise AppServerError("The IDE conversation is not confirmed unloaded.")
+        if paginated:
+            current = await self._paginated_turn(thread_id, turn)
+            if require_inactive_writer and (
+                not current
+                or current != turn
+                or current.get("status") not in {"completed", "failed", "interrupted"}
+                or not await asyncio.to_thread(thread_writer_absent, home, thread_id)
+            ):
+                raise AppServerError("The IDE conversation has no stable terminal turn.")
+            return current
         if not turn:
             raise AppServerError("Empty legacy history could not be verified.")
         if not isinstance(thread.get("path"), str):
             raise AppServerError("Could not verify the live conversation state.")
-        from codex_account_manager.codex.turn_activity import read_turn_activity
-
-        state = await asyncio.to_thread(
-            read_turn_activity, thread["path"], Path(self.codex_home), turn["id"]
-        )
+        state = await asyncio.to_thread(read_turn_activity, thread["path"], home, turn["id"])
         if state == "unknown":
             raise AppServerError("Conversation lifecycle metadata is unavailable.")
         if state == "completed" and turn.get("status") == "failed":

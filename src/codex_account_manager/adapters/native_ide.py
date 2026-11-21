@@ -26,6 +26,7 @@ from codex_account_manager.codex.status import normalize_turn_status
 from codex_account_manager.core.errors import (
     AppServerError,
     ConnectionNotReadyError,
+    IDEPipeNotFoundError,
     LocalResponseTooLargeError,
     OwnerNotFoundError,
 )
@@ -252,8 +253,10 @@ def _exchange(
     import pywintypes
     import win32con
     import win32file
+    from winerror import ERROR_FILE_NOT_FOUND
 
     sending = expected is not None and bool(message_id)
+    handle = None
     try:
         handle = win32file.CreateFile(
             r"\\.\pipe\codex-ipc",
@@ -277,6 +280,8 @@ def _exchange(
     except pywintypes.error as exc:
         if sending:
             raise AppServerError("IDE continuation delivery is unconfirmed.") from exc
+        if handle is None and exc.winerror == ERROR_FILE_NOT_FOUND:
+            raise IDEPipeNotFoundError("The local IDE router pipe was not found.") from exc
         raise ConnectionNotReadyError("The local IDE channel is reconnecting.") from exc
 
 

@@ -185,6 +185,64 @@ async def test_closed_ide_owner_can_use_verified_finished_history(migrated_db, m
     assert (await power.PowerChecks(AsyncMock())._turn(server, "root"))["status"] == "completed"
 
 
+@pytest.mark.parametrize(
+    ("failure", "stored_status", "other_goal", "ready"),
+    [
+        ("missing", "completed", None, True),
+        ("missing", "interrupted", None, True),
+        ("missing", None, None, False),
+        ("missing", "completed", "active", False),
+        ("reconnecting", "completed", None, False),
+    ],
+)
+async def test_shutdown_fallback_for_missing_ide_pipe(
+    migrated_db, monkeypatch, failure, stored_status, other_goal, ready
+):
+    from unittest.mock import AsyncMock
+
+    from codex_account_manager.adapters.native_ide import NativeIDE
+    from codex_account_manager.core.errors import (
+        AppServerError,
+        ConnectionNotReadyError,
+        IDEPipeNotFoundError,
+    )
+    from codex_account_manager.monitoring import power
+    from tests.fakes import FakeAppServer
+    from tests.integration.test_limit_continuation import _thread
+
+    threads = [
+        replace(_thread("selected", 1), source="cli"),
+        replace(_thread("old-ide", 2), source="vscode", status="notLoaded"),
+    ]
+    server = FakeAppServer(
+        threads=threads, turns={"selected": {"id": "run", "status": "completed"}}
+    )
+    server.verified_stored_turn = AsyncMock(
+        return_value={"id": "old-turn", "status": stored_status},
+        side_effect=None if stored_status else AppServerError("An IDE writer may be active."),
+    )
+    server.get_goal = AsyncMock(
+        side_effect=lambda tid: GoalInfo(
+            tid, None, other_goal, tid == "old-ide" and bool(other_goal)
+        )
+    )
+    monkeypatch.setattr(power, "CodexAppServer", lambda *_a, **_k: server)
+    connection_error = IDEPipeNotFoundError if failure == "missing" else ConnectionNotReadyError
+    monkeypatch.setattr(NativeIDE, "inspect", AsyncMock(side_effect=connection_error("test")))
+    evidence = await power.PowerChecks(None).check(PowerTarget("work", "selected", None, "run"))
+    assert evidence.ready is ready
+    if failure == "missing":
+        server.verified_stored_turn.assert_awaited_once_with(
+            "old-ide", require_inactive_writer=True
+        )
+    else:
+        server.verified_stored_turn.assert_not_awaited()
+    if other_goal:
+        assert "running jobs or active goals" in evidence.reason
+    elif not ready:
+        assert "Could not verify" in evidence.reason
+
+
 def test_shutdown_requires_arming_and_fresh_continuous_evidence():
     plan = ShutdownPlan(60)
     good = PowerEvidence(True, "done", "accounts-a-b")

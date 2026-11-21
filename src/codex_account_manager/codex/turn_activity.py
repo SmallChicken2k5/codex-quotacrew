@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import stat
 import time
 from pathlib import Path
+from uuid import UUID
 
 from codex_account_manager.core.files import resolved_path
 
@@ -15,6 +17,23 @@ _TERMINAL_EVENTS = {
     "task_completed": "completed",
     "turn_aborted": "interrupted",
 }
+
+
+def thread_writer_absent(codex_home: Path, thread_id: str) -> bool:
+    """Check that this Codex home has writer coordination and no thread lock file."""
+    try:
+        if str(UUID(thread_id)) != thread_id:
+            return False
+        directory = codex_home / "thread-writer-locks"
+        if not stat.S_ISREG((directory / ".coordination.lock").lstat().st_mode):
+            return False
+        try:
+            (directory / f"{thread_id}.lock").lstat()
+        except FileNotFoundError:
+            return True
+    except (ValueError, OSError):
+        pass
+    return False
 
 
 def read_turn_activity(rollout: str, codex_home: Path, turn_id: str) -> str:

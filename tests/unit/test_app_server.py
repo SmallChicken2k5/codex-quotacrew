@@ -31,6 +31,66 @@ async def test_paginated_history_observation_does_not_require_rollout_file(tmp_p
     assert (await server.observed_turn("thread"))["status"] == status
 
 
+@pytest.mark.parametrize(
+    ("history", "activity", "first", "latest", "writer", "verified"),
+    [
+        ("paginated", "notLoaded", "completed", "completed", None, True),
+        ("paginated", "notLoaded", "failed", "failed", None, True),
+        ("paginated", "notLoaded", "interrupted", "interrupted", None, True),
+        ("paginated", "notLoaded", "interrupted", "interrupted", "before", False),
+        ("paginated", "notLoaded", "interrupted", "interrupted", "during", False),
+        ("paginated", "notLoaded", "interrupted", "interrupted", "unknown", False),
+        ("paginated", "notLoaded", "completed", "inProgress", None, False),
+        ("paginated", "notLoaded", "inProgress", "inProgress", None, False),
+        ("paginated", "notLoaded", "failed", "completed", None, False),
+        ("paginated", "notLoaded", "completed", "new-turn", None, False),
+        ("paginated", "notLoaded", None, None, None, False),
+        ("paginated", "active", "completed", "completed", None, False),
+        ("legacy", "notLoaded", "completed", "completed", None, False),
+    ],
+)
+async def test_unavailable_ide_requires_stable_terminal_history_without_a_writer(
+    tmp_paths, history, activity, first, latest, writer, verified
+):
+    thread_id = "019a8057-b9fc-71b2-b102-b7a821e08924"
+    lock_dir = tmp_paths.shared_codex_home / "thread-writer-locks"
+    lock_dir.mkdir()
+    if writer != "unknown":
+        (lock_dir / ".coordination.lock").touch()
+    lock = lock_dir / f"{thread_id}.lock"
+    if writer == "before":
+        lock.touch()
+
+    server = CodexAppServer(tmp_paths.shared_codex_home)
+
+    async def read_thread(method, params):
+        assert method == "thread/read" and params == {"threadId": thread_id, "includeTurns": False}
+        if writer == "during":
+            lock.touch()
+        return {
+            "thread": {
+                "id": thread_id,
+                "historyMode": history,
+                "status": {"type": activity},
+            }
+        }
+
+    server._request_with_discovery_retry = read_thread
+    first_turn = {"id": "turn", "status": first} if first else None
+    latest_turn = {"id": "turn", "status": latest} if latest else None
+    if latest == "new-turn":
+        latest_turn = {"id": "another-turn", "status": first}
+    server.latest_turn = AsyncMock(side_effect=[first_turn, latest_turn])
+
+    if verified:
+        assert (
+            await server.verified_stored_turn(thread_id, require_inactive_writer=True) == first_turn
+        )
+    else:
+        with pytest.raises(AppServerError):
+            await server.verified_stored_turn(thread_id, require_inactive_writer=True)
+
+
 async def test_guardian_and_worker_sources_remain_distinct():
     server = CodexAppServer("test")
     source = {"subagent": {"other": "guardian"}}
