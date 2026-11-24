@@ -993,17 +993,32 @@ async def test_manual_switch_resumes_running_desktop_work_without_quota_error(
         fake.account_id = "acc-2"
         return account_identity("acc-2")
 
+    allow_continuation = asyncio.Event()
+    run_continuation = service.automation.run
+
+    async def run_after_restart_check(ticket):
+        await allow_continuation.wait()
+        await run_continuation(ticket)
+
+    monkeypatch.setattr(service.automation, "run", run_after_restart_check)
     desktop = Desktop()
-    result = await service.continue_on_limit(
-        "hesap2",
-        transaction=AuthTransaction(credential_store=store, desktop=desktop, verify_account=verify),
-        reason=HandoffReason.MANUAL,
-    )
-    assert result.success
-    ordinary = next(row for row in await service.tracker.visible() if row.thread_id == "ordinary")
-    assert not ordinary.verified, "A Desktop restart invalidates its old running evidence"
-    assert next(row for row in await service.tracker.visible() if row.thread_id == "cli").verified
-    await asyncio.gather(*tuple(service.automation.tasks))
+    try:
+        result = await service.continue_on_limit(
+            "hesap2",
+            transaction=AuthTransaction(
+                credential_store=store, desktop=desktop, verify_account=verify
+            ),
+            reason=HandoffReason.MANUAL,
+        )
+        assert result.success
+        rows = {row.thread_id: row for row in await service.tracker.visible()}
+        assert not rows["ordinary"].verified, (
+            "A Desktop restart invalidates its old running evidence"
+        )
+        assert rows["cli"].verified
+    finally:
+        allow_continuation.set()
+        await asyncio.gather(*tuple(service.automation.tasks))
     await asyncio.wait_for(
         asyncio.gather(*tuple(service.automation.goal_observer.tasks.values())), 5
     )
