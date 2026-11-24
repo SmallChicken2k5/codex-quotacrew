@@ -804,30 +804,20 @@ class ContinuationSupervisor:
             if await observe_manual_turn(latest, goal):
                 return
             if (
-                ticket.resume_running_turn
-                and latest.get("id") == ticket.turn_id
-                and normalize_turn_status(latest.get("status")) == "inProgress"
-                and goal is not None
-                and goal_allows_continuation(goal)
-                and goal_signature(goal) == ticket.goal_signature
-                and not ticket.owner_id
-                and (
-                    goal.present
-                    and goal.status == "active"
-                    and await self.native.thread_status(ticket.thread_id) == "active"
-                )
-            ):
-                await self.tracker.observe(ticket.owner_key or "", ticket.thread_id, latest, goal)
-                await self.report(ticket.thread_id, "running", "observation")
-                bus.publish("work.observed")
-                return
-            if (
-                latest.get("id") != ticket.turn_id
-                and normalize_turn_status(latest.get("status")) == "inProgress"
+                normalize_turn_status(latest.get("status")) == "inProgress"
                 and goal is not None
                 and goal.present
                 and goal.status == "active"
                 and goal_signature(goal) == ticket.goal_signature
+                and (
+                    latest.get("id") != ticket.turn_id
+                    or (
+                        ticket.resume_running_turn
+                        and not ticket.owner_id
+                        and goal_allows_continuation(goal)
+                        and await self.native.thread_status(ticket.thread_id) == "active"
+                    )
+                )
             ):
                 await self.tracker.observe(ticket.owner_key or "", ticket.thread_id, latest, goal)
                 await self.report(ticket.thread_id, "running", "observation")
