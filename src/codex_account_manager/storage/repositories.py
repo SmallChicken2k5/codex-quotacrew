@@ -69,6 +69,12 @@ class ProfileRepository:
                     profile.auto_switch_enabled,
                 ),
             )
+            if profile.bound_account_id is not None:
+                await db.execute(
+                    "INSERT INTO profile_accounts (profile_id, account_id, bound_at, user_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    (profile.id, profile.bound_account_id, _now_iso(), profile.bound_user_id),
+                )
             await db.commit()
 
     async def rename(self, profile_id: str, new_alias: str) -> None:

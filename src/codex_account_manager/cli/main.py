@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -156,6 +157,13 @@ def profile_login(alias: str) -> None:
     """Run ``codex login`` inside the profile's home."""
     _run(_accounts.login_profile(alias))
     console.print("[green]Signed in and bound the profile.[/green]")
+
+
+@profile_app.command("import-auth")
+def profile_import_auth(alias: str, auth_file: Path) -> None:
+    """Verify a Codex auth.json and save it as a new profile."""
+    _run(_accounts.import_profile(alias, auth_file))
+    console.print("[green]Sign-in file verified and profile created.[/green]")
 
 
 @profile_app.command("rename")

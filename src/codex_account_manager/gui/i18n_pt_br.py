@@ -1,6 +1,18 @@
 """Brazilian Portuguese translations for the QuotaCrew interface."""
 
 PT_BR: dict[str, str] = {
+    "Sign in through Codex or import an existing auth.json file.": "Entre pelo Codex ou importe um arquivo auth.json existente.",
+    "How would you like to add this account?": "Como você quer adicionar esta conta?",
+    "Sign in with browser": "Entrar pelo navegador",
+    "Import auth.json": "Importar auth.json",
+    "JSON files (*.json)": "Arquivos JSON (*.json)",
+    "Verifying the imported sign-in with Codex…": "Verificando o acesso importado com o Codex…",
+    "Could not import auth.json": "Não foi possível importar o auth.json",
+    "Could not read the selected sign-in file.": "Não foi possível ler o arquivo de acesso selecionado.",
+    "Choose an auth.json from a ChatGPT sign-in in Codex.": "Escolha um auth.json gerado ao entrar no Codex com o ChatGPT.",
+    "The imported sign-in does not match the account verified by Codex.": "O acesso importado não corresponde à conta verificada pelo Codex.",
+    "A profile with this name already exists.": "Já existe um perfil com esse nome.",
+    "Codex rejected this sign-in. Choose a current auth.json or sign in with a browser.": "O Codex rejeitou este acesso. Escolha um auth.json atualizado ou entre pelo navegador.",
     "Include in automatic switching": "Incluir na troca automática",
     "Include {account} in automatic switching": "Incluir {account} na troca automática",
     "Auto-switch": "Troca auto.",

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -15,7 +17,11 @@ from PySide6.QtWidgets import (
 
 from codex_account_manager.accounts.service import AccountService
 from codex_account_manager.continuity.policy import SwitchPolicy
-from codex_account_manager.core.errors import AccountAlreadyBoundError, OperationBusyError
+from codex_account_manager.core.errors import (
+    AccountAlreadyBoundError,
+    OperationBusyError,
+    SignInRequiredError,
+)
 from codex_account_manager.domain.models import Profile, ProfileHealth
 from codex_account_manager.gui.account_table import (
     AccountControls,
@@ -55,14 +61,12 @@ class AccountsView(BaseView):
         add = QPushButton(tr(" Add profile"))
         add.setObjectName("Primary")
         set_button_icon(add, "accounts", palette.on_primary)
-        add.clicked.connect(self._add)
+        add.clicked.connect(self._choose_add_method)
         self.add_button = add
         self._root.addWidget(
             view_header(
                 tr("Accounts"),
-                tr(
-                    "Add an account to open Codex sign-in automatically. Use each row's actions to manage saved accounts."
-                ),
+                tr("Sign in through Codex or import an existing auth.json file."),
                 add,
             )
         )
@@ -72,11 +76,9 @@ class AccountsView(BaseView):
 
         self.guide = EmptyState(
             tr("Bring your first account"),
-            tr(
-                "Start with a name you recognize. Sign in securely through Codex; your account is linked automatically."
-            ),
+            tr("Sign in through Codex or import an existing auth.json file."),
             tr("Add a profile"),
-            self._add,
+            self._choose_add_method,
         )
         self.guide.hide()
         panel_layout.addWidget(self.guide)
@@ -271,23 +273,79 @@ class AccountsView(BaseView):
         for button in self._menu_buttons:
             button.setEnabled(enabled)
 
-    def _add(self) -> None:
+    def _choose_add_method(self) -> None:
         if self._login_busy:
             return
-        alias = prompt_text(
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(tr("Add profile"))
+        dialog.setText(tr("How would you like to add this account?"))
+        browser = dialog.addButton(tr("Sign in with browser"), QMessageBox.ButtonRole.AcceptRole)
+        import_file = dialog.addButton(tr("Import auth.json"), QMessageBox.ButtonRole.ActionRole)
+        cancel = dialog.addButton(tr("Cancel"), QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(browser)
+        dialog.setEscapeButton(cancel)
+        dialog.exec()
+        if dialog.clickedButton() == browser:
+            self._add()
+        elif dialog.clickedButton() == import_file:
+            self._import()
+
+    def _account_name(self, action: str) -> str | None:
+        return prompt_text(
             self,
             tr("Add profile"),
             tr("Account name"),
             tr("Choose a name you will recognize, such as Personal or Work."),
             maximum=64,
-            action="Add account",
+            action=action,
         )
+
+    def _add(self) -> None:
+        if self._login_busy:
+            return
+        alias = self._account_name("Add account")
         if alias:
             self._login_busy = True
             self._set_actions_enabled(False)
             self.runner.submit(
                 self.accounts.create_profile(alias), self._created, self._login_failed
             )
+
+    def _import(self) -> None:
+        if self._login_busy:
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, tr("Import auth.json"), "", tr("JSON files (*.json)")
+        )
+        if not filename:
+            return
+        alias = self._account_name("Import auth.json")
+        if not alias:
+            return
+        self._login_busy = True
+        self._set_actions_enabled(False)
+        self.operation_status.setText(tr("Verifying the imported sign-in with Codex…"))
+        self.operation_status.show()
+        self.runner.submit(
+            self.accounts.import_profile(alias, Path(filename)),
+            self._login_done,
+            self._import_failed,
+        )
+
+    def _import_failed(self, error: Exception) -> None:
+        if isinstance(error, AccountAlreadyBoundError):
+            self._already_bound(error)
+            return
+        self._login_busy = False
+        self._set_actions_enabled(True)
+        self.operation_status.clear()
+        self.operation_status.hide()
+        detail = (
+            tr("Codex rejected this sign-in. Choose a current auth.json or sign in with a browser.")
+            if isinstance(error, SignInRequiredError)
+            else error_message(str(error))
+        )
+        QMessageBox.warning(self, tr("Could not import auth.json"), detail)
 
     def _created(self, profile) -> None:
         self._login_busy = False
@@ -307,8 +365,11 @@ class AccountsView(BaseView):
                 self.accounts.login_profile(alias), self._login_done, self._login_failed
             )
 
-    def _login_done(self, _account_id: str) -> None:
+    def _login_done(self, result: str | Profile) -> None:
         self._login_busy = False
+        if isinstance(result, Profile):
+            self._reveal_profile_id = result.id
+            self.controls.clear_filters()
         self.operation_status.setText(
             tr("Sign-in complete. Your account is linked. Refresh usage in Overview.")
         )

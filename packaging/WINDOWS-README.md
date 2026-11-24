@@ -15,8 +15,10 @@ quota-interrupted conversations from one Windows application.
 2. Choose your preferences in the first-run assistant. Python is included. If
    Codex CLI is missing, the assistant can install OpenAI's official standalone
    CLI with your confirmation; Node.js is not required.
-3. Add an account and complete Codex sign-in. Enable monitoring and choose your
-   switching and continuation preferences when ready.
+3. Open **My accounts → Add account**. Choose **Sign in with browser** or
+   **Import auth.json**. An imported file must contain a current Codex sign-in
+   that Codex can verify. Enable monitoring and choose your switching and
+   continuation preferences when ready.
 
 Existing Codex conversations are preserved. QuotaCrew stores its profiles and
 settings locally; System check shows their locations. Upgrades and removal preserve

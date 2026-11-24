@@ -407,6 +407,47 @@ def test_account_creation_starts_login_and_blocks_duplicate_adds(window, monkeyp
     assert view._login_busy and not view.add_button.isEnabled()
 
 
+@pytest.mark.parametrize("cancel_file", [False, True])
+def test_add_account_can_import_auth_file(window, qt_app, monkeypatch, tmp_path, cancel_file):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    from codex_account_manager.gui import accounts as module
+
+    source = tmp_path / "auth.json"
+    view = window.accounts_view
+    selections = []
+
+    def open_file(*args):
+        selections.append(args[1])
+        return ("" if cancel_file else str(source)), "JSON files (*.json)"
+
+    submitted = []
+
+    def submit(coro, *_args):
+        submitted.append((coro.cr_code.co_name, coro.cr_frame.f_locals["source"]))
+        coro.close()
+
+    def select_import():
+        dialog = qt_app.activeModalWidget()
+        if isinstance(dialog, QMessageBox):
+            for button in dialog.buttons():
+                if button.text() == "Import auth.json":
+                    button.click()
+                    return
+            dialog.reject()
+
+    monkeypatch.setattr(module.QFileDialog, "getOpenFileName", open_file)
+    monkeypatch.setattr(module, "prompt_text", lambda *_args, **_kwargs: "Imported")
+    monkeypatch.setattr(window.runner, "submit", submit)
+    QTimer.singleShot(0, select_import)
+    view.add_button.click()
+
+    assert selections == ["Import auth.json"]
+    assert submitted == ([] if cancel_file else [("import_profile", source)])
+    assert view.add_button.isEnabled() is cancel_file
+
+
 def test_continuation_badges_and_tray_follow_loaded_settings(window):
     window.settings.desktop._checked(True)
     window.settings.ide._checked("installed")

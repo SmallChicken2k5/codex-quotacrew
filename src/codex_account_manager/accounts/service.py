@@ -20,6 +20,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from codex_account_manager.adapters.app_server import CodexAppServer
+from codex_account_manager.adapters.auth_identity import MAX_AUTH_BYTES, auth_evidence
 from codex_account_manager.adapters.credential_store import FileCredentialStore
 from codex_account_manager.adapters.interfaces import AppServerAdapter
 from codex_account_manager.codex.quota import evaluate_quota
@@ -56,6 +57,7 @@ _PROFILE_CONFIG = 'cli_auth_credentials_store = "file"\n'
 #: Upper bound on concurrent App Server reads to keep the machine responsive.
 _MAX_CONCURRENT_READS = 4
 ACCOUNT_READ_TIMEOUT = 45.0
+_DUPLICATE_ALIAS = "A profile with this name already exists."
 
 
 def account_read_lock(codex_home: str | Path) -> OperationLock:
@@ -110,6 +112,19 @@ class AccountService:
         )
 
     async def create_profile(self, alias: str) -> Profile:
+        profile = self._prepare_profile(alias)
+        try:
+            await self.profiles.create(profile)
+        except sqlite3.IntegrityError as exc:
+            shutil.rmtree(profile.codex_home, ignore_errors=True)
+            raise ValueError(_DUPLICATE_ALIAS) from exc
+        except Exception:
+            shutil.rmtree(profile.codex_home, ignore_errors=True)
+            raise
+        return profile
+
+    @staticmethod
+    def _prepare_profile(alias: str) -> Profile:
         alias = _validate_alias(alias)
         profile_id = str(uuid4())
         codex_home = paths.profiles_dir / profile_id
@@ -118,22 +133,68 @@ class AccountService:
         try:
             restrict_access(codex_home)
             (codex_home / "config.toml").write_text(_PROFILE_CONFIG, encoding="utf-8")
-            profile = Profile(id=profile_id, alias=alias, codex_home=str(codex_home))
-            await self.profiles.create(profile)
-        except sqlite3.IntegrityError as exc:
-            shutil.rmtree(codex_home, ignore_errors=True)
-            raise ValueError("A profile with this name already exists.") from exc
+            return Profile(id=profile_id, alias=alias, codex_home=str(codex_home))
         except Exception:
             shutil.rmtree(codex_home, ignore_errors=True)
             raise
-        return profile
+
+    async def import_profile(self, alias: str, source: Path) -> Profile:
+        """Verify a Codex sign-in file and save it as a new, bound profile."""
+        alias = _validate_alias(alias)
+        data = await asyncio.to_thread(_read_import_auth, source)
+        evidence = auth_evidence(data).identity
+        if not evidence.workspace_id:
+            raise ValueError("Choose an auth.json from a ChatGPT sign-in in Codex.")
+
+        with OperationLock(paths.data_dir / "account-operation.lock"):
+            if await self.profiles.get_by_alias(alias):
+                raise ValueError(_DUPLICATE_ALIAS)
+            profile = self._prepare_profile(alias)
+            saved = False
+
+            async def save(bound: Profile) -> None:
+                nonlocal saved
+                await self.profiles.create(bound)
+                saved = True
+
+            try:
+                self.credentials.store_new_profile(profile.codex_home, data)
+                # A refresh could rotate a token still in use by the source installation.
+                account_id, identity = await self._verified_account(
+                    profile.codex_home, allow_refresh=False
+                )
+                if account_id != evidence.workspace_id or (
+                    evidence.user_id and identity.user_id != evidence.user_id
+                ):
+                    raise AccountMismatchError(
+                        "The imported sign-in does not match the account verified by Codex."
+                    )
+                bound = profile.model_copy(
+                    update={"bound_account_id": account_id, "bound_user_id": identity.user_id}
+                )
+                try:
+                    # Let SQLite finish before deciding whether to remove the credential directory.
+                    await finish_cleanup(save(bound))
+                except asyncio.CancelledError:
+                    # Shutdown can also cancel the save task itself after SQLite has committed.
+                    if not saved:
+                        saved = any(item.id == profile.id for item in await self.profiles.list())
+                    raise
+                except sqlite3.IntegrityError as exc:
+                    if await self.profiles.get_by_alias(alias):
+                        raise ValueError(_DUPLICATE_ALIAS) from exc
+                    raise await self._account_binding_conflict(profile.id, identity) from exc
+                return bound
+            finally:
+                if not saved:
+                    shutil.rmtree(profile.codex_home)
 
     async def rename_profile(self, alias: str, new_alias: str) -> None:
         profile = await self._require(alias)
         try:
             await self.profiles.rename(profile.id, _validate_alias(new_alias))
         except sqlite3.IntegrityError as exc:
-            raise ValueError("A profile with this name already exists.") from exc
+            raise ValueError(_DUPLICATE_ALIAS) from exc
 
     async def set_auto_switch_enabled(self, profile_id: str, enabled: bool) -> None:
         with OperationLock(paths.data_dir / "account-operation.lock"):
@@ -199,7 +260,25 @@ class AccountService:
 
     async def _bind_current_account(self, alias: str) -> str:
         profile = await self._require(alias)
-        snapshot = await self.read_snapshot(profile.codex_home)
+        account_id, identity = await self._verified_account(profile.codex_home)
+        try:
+            await self.profiles.bind_account(profile.id, account_id, user_id=identity.user_id)
+        except sqlite3.IntegrityError as exc:
+            raise await self._account_binding_conflict(profile.id, identity) from exc
+        return account_id
+
+    async def _account_binding_conflict(
+        self, profile_id: str, identity: AccountIdentity
+    ) -> ValueError | AccountAlreadyBoundError:
+        for existing in await self.profiles.list():
+            if existing.id != profile_id and existing.identity.matches(identity):
+                return AccountAlreadyBoundError(existing.id, existing.alias)
+        return ValueError("This account is already bound to another profile.")
+
+    async def _verified_account(
+        self, codex_home: str, *, allow_refresh: bool = True
+    ) -> tuple[str, AccountIdentity]:
+        snapshot = await self.read_snapshot(codex_home, allow_refresh=allow_refresh)
         identity = snapshot.identity
         if (
             not snapshot.account_id
@@ -210,16 +289,7 @@ class AccountService:
             raise AccountMismatchError(
                 "The user and workspace could not be verified. Check Codex or sign in again."
             )
-        try:
-            await self.profiles.bind_account(
-                profile.id, snapshot.account_id, user_id=identity.user_id
-            )
-        except sqlite3.IntegrityError as exc:
-            for existing in await self.profiles.list():
-                if existing.id != profile.id and existing.identity.matches(identity):
-                    raise AccountAlreadyBoundError(existing.id, existing.alias) from exc
-            raise ValueError("This account is already bound to another profile.") from exc
-        return snapshot.account_id
+        return snapshot.account_id, identity
 
     async def read_snapshot(
         self, codex_home: str | Path, *, allow_refresh: bool = True, force_refresh: bool = False
@@ -513,6 +583,16 @@ class AccountService:
         if not profile:
             raise ProfileNotFoundError(f"Profile not found: {alias}")
         return profile
+
+
+def _read_import_auth(source: Path) -> bytes:
+    try:
+        if not source.is_file():
+            raise OSError
+        with source.open("rb") as stream:
+            return stream.read(MAX_AUTH_BYTES + 1)
+    except OSError:
+        raise ValueError("Could not read the selected sign-in file.") from None
 
 
 def _validate_alias(alias: str) -> str:

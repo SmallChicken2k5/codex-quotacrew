@@ -1,12 +1,15 @@
 import asyncio
 import subprocess
 import sys
+from unittest.mock import AsyncMock
 
 import pytest
 
 from codex_account_manager.accounts.service import AccountService
+from codex_account_manager.adapters.auth_identity import MAX_AUTH_BYTES
+from codex_account_manager.core.errors import AccountAlreadyBoundError, AccountMismatchError
 from codex_account_manager.domain.identity import AccountIdentity, IdentityState
-from tests.fakes import FakeAppServer
+from tests.fakes import FakeAppServer, account_auth
 
 
 def _factory(account_id="acc-1", **kw):
@@ -46,6 +49,93 @@ async def test_bind_and_health_match(migrated_db):
     assert health.plan_type == "plus"
     assert health.primary_window_minutes == 300
     assert health.secondary_window_minutes == 10080
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [b"{", b'{"OPENAI_API_KEY":"synthetic"}', b"x" * (MAX_AUTH_BYTES + 1)],
+    ids=["malformed", "api-key", "oversized"],
+)
+async def test_import_rejects_invalid_file_before_creating_profile(migrated_db, tmp_path, contents):
+    source = tmp_path / "auth.json"
+    source.write_bytes(contents)
+    svc = AccountService(app_server_factory=_factory())
+    with pytest.raises(ValueError, match="ChatGPT sign-in"):
+        await svc.import_profile("Imported", source)
+    assert await svc.list_profiles() == []
+    assert list(migrated_db.profiles_dir.iterdir()) == []
+
+
+async def test_import_duplicate_leaves_original_profile_and_source(migrated_db, tmp_path):
+    source = tmp_path / "auth.json"
+    source.write_bytes(account_auth())
+    svc = AccountService(app_server_factory=_factory())
+    original = await svc.import_profile("Original", source)
+
+    with pytest.raises(ValueError, match="name already exists"):
+        await svc.import_profile("Original", source)
+    with pytest.raises(AccountAlreadyBoundError) as duplicate:
+        await svc.import_profile("Duplicate", source)
+
+    assert duplicate.value.profile_id == original.id
+    assert await svc.list_profiles() == [original]
+    assert [path.name for path in migrated_db.profiles_dir.iterdir()] == [original.id]
+    assert (
+        svc.credentials.read_profile(original.codex_home) == source.read_bytes() == account_auth()
+    )
+
+
+async def test_import_drops_unverified_profile(migrated_db, tmp_path, monkeypatch):
+    source = tmp_path / "auth.json"
+    source.write_bytes(account_auth())
+    svc = AccountService(app_server_factory=_factory("other-workspace"))
+    read = AsyncMock(wraps=svc.read_snapshot)
+    monkeypatch.setattr(svc, "read_snapshot", read)
+
+    with pytest.raises(AccountMismatchError, match="does not match"):
+        await svc.import_profile("Unverified", source)
+
+    assert read.await_args.kwargs == {"allow_refresh": False}
+    assert await svc.list_profiles() == []
+    assert list(migrated_db.profiles_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("cancel_save_directly", [False, True])
+async def test_cancel_during_import_commit_keeps_profile_and_credentials(
+    migrated_db, tmp_path, monkeypatch, cancel_save_directly
+):
+    source = tmp_path / "auth.json"
+    source.write_bytes(account_auth())
+    svc = AccountService(app_server_factory=_factory())
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    create = svc.profiles.create
+    save_task = None
+
+    async def delayed_commit(profile):
+        nonlocal save_task
+        save_task = asyncio.current_task()
+        if cancel_save_directly:
+            await create(profile)
+        entered.set()
+        await release.wait()
+        if not cancel_save_directly:
+            await create(profile)
+
+    monkeypatch.setattr(svc.profiles, "create", delayed_commit)
+    task = asyncio.create_task(svc.import_profile("Imported", source))
+    await asyncio.wait_for(entered.wait(), 5)
+    if cancel_save_directly:
+        assert save_task is not None
+        save_task.cancel()
+    else:
+        task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    (profile,) = await svc.list_profiles()
+    assert profile.bound_account_id == "acc-1"
+    assert svc.credentials.read_profile(profile.codex_home) == account_auth()
 
 
 async def test_all_health_reports_every_profile(migrated_db):

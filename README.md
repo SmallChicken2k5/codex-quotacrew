@@ -67,7 +67,7 @@ The plan badge can also show the subscription-period date recorded at sign-in wh
 
 1. **Download and install.** Get QuotaCrew from [Microsoft Store](https://apps.microsoft.com/detail/9NM4VKLKS9PF), or install `QuotaCrew-Setup-0.4.3.exe` from the [latest GitHub release](https://github.com/erkanpulat/codex-quotacrew/releases/latest). For portable use, download `QuotaCrew-portable-0.4.3.zip`, extract the entire archive into a folder and open `QuotaCrew.exe`.
 2. **Choose your preferences.** The first-run assistant introduces monitoring, switching, continuation and tray options. If Codex CLI is missing, it offers the official Windows installation with your consent; an existing CLI installation is preserved.
-3. **Add your accounts.** Open **My accounts → Add account** and give the account a recognizable name. Complete sign-in in the terminal and default browser that open. You can copy the terminal’s sign-in link into another browser; keep the terminal open until QuotaCrew confirms the account was linked.
+3. **Add your accounts.** Open **My accounts → Add account**. Choose **Sign in with browser** to add a name and complete Codex sign-in. You can copy the terminal’s sign-in link into another browser. Keep the terminal open until QuotaCrew confirms the account was linked. Choose **Import auth.json** to select a sign-in file from Codex and name the account. QuotaCrew verifies the imported account with Codex before saving it. If Codex rejects the file, use a current file or sign in with your browser.
 
 Version 0.4.0 upgrades the account database. Keep this version installed after upgrading; older versions cannot open the upgraded database. If an existing profile needs ownership verification, use **Verify account again** from its actions menu.
 
@@ -253,6 +253,8 @@ codex-accounts accounts
 codex-accounts switch work
 codex-accounts doctor --bundle
 ```
+
+To add an account from a Codex sign-in file, run `cx profile import-auth work <path-to-auth.json>`.
 
 Developer checks:
 

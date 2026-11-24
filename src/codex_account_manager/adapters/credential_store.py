@@ -115,6 +115,22 @@ class FileCredentialStore:
             )
         return ProfileAuthSession(codex_home, signing_in=signing_in)
 
+    def store_new_profile(self, codex_home: str | Path, data: bytes) -> None:
+        home = Path(codex_home)
+        if not managed_home(home) or not home.is_dir():
+            raise protection.CredentialProtectionError(
+                "Profile is outside managed account storage."
+            )
+        with OperationLock(home / "auth-session.lock"):
+            plain = _checked_file(home / _AUTH_FILE)
+            vault = _checked_file(home / _VAULT_FILE)
+            if plain.exists() or vault.exists():
+                raise FileExistsError("This profile already has sign-in data.")
+            if protection.available():
+                atomic_write(vault, protection.protect(data, _PURPOSE))
+            else:
+                atomic_write(plain, data)
+
     def read_profile(self, codex_home: str | Path) -> bytes:
         if not managed_home(codex_home):
             raise protection.CredentialProtectionError(

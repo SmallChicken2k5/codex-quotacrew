@@ -80,6 +80,18 @@ EN = {
 }
 
 TR = {
+    "Sign in through Codex or import an existing auth.json file.": "Codex üzerinden giriş yapın veya mevcut bir auth.json dosyasını içe aktarın.",
+    "How would you like to add this account?": "Bu hesabı nasıl eklemek istersiniz?",
+    "Sign in with browser": "Tarayıcıyla giriş yap",
+    "Import auth.json": "auth.json içe aktar",
+    "JSON files (*.json)": "JSON dosyaları (*.json)",
+    "Verifying the imported sign-in with Codex…": "İçe aktarılan giriş bilgileri Codex ile doğrulanıyor…",
+    "Could not import auth.json": "auth.json içe aktarılamadı",
+    "Could not read the selected sign-in file.": "Seçilen giriş dosyası okunamadı.",
+    "Choose an auth.json from a ChatGPT sign-in in Codex.": "Codex'te ChatGPT ile giriş yapılarak oluşturulmuş bir auth.json dosyası seçin.",
+    "The imported sign-in does not match the account verified by Codex.": "İçe aktarılan giriş bilgileri Codex'in doğruladığı hesapla eşleşmiyor.",
+    "A profile with this name already exists.": "Bu adda bir profil zaten var.",
+    "Codex rejected this sign-in. Choose a current auth.json or sign in with a browser.": "Codex bu girişi reddetti. Güncel bir auth.json seçin veya tarayıcıyla giriş yapın.",
     "Include in automatic switching": "Otomatik geçişe dahil et",
     "Include {account} in automatic switching": "{account} hesabını otomatik geçişe dahil et",
     "Auto-switch": "Oto. geçiş",
