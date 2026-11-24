@@ -49,11 +49,14 @@ class AboutView(BaseView):
         buttons.addWidget(label(tr("Support the project"), "H2"), 0, 0, 1, 2)
         for index, (title, url) in enumerate(
             (
-                ("Star on GitHub", "https://github.com/erkanpulat/codex-quotacrew"),
-                ("Report an issue", "https://github.com/erkanpulat/codex-quotacrew/issues"),
+                ("Star on GitHub", "https://github.com/erkanpulat/quotacrew-codex-auto-resume"),
+                (
+                    "Report an issue",
+                    "https://github.com/erkanpulat/quotacrew-codex-auto-resume/issues",
+                ),
                 (
                     "Contribute a pull request",
-                    "https://github.com/erkanpulat/codex-quotacrew/pulls",
+                    "https://github.com/erkanpulat/quotacrew-codex-auto-resume/pulls",
                 ),
                 ("Developer profile", "https://github.com/erkanpulat"),
             )
