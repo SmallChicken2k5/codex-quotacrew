@@ -303,7 +303,7 @@ async def test_slow_owner_readiness_keeps_unsent_ticket_and_recovers_once(migrat
         supervisor.ide.wait_inspect = AsyncMock(side_effect=ConnectionNotReadyError("not ready"))
         supervisor.ide.send = AsyncMock()
     else:
-        supervisor.native.wait_latest_turn = AsyncMock(
+        supervisor.native.check_message_target = AsyncMock(
             side_effect=ConnectionNotReadyError("not ready")
         )
         supervisor.native.send = AsyncMock()
@@ -324,8 +324,9 @@ async def test_slow_owner_readiness_keeps_unsent_ticket_and_recovers_once(migrat
         )
         sender = supervisor.ide.send
     else:
-        supervisor.native.wait_latest_turn = AsyncMock(return_value=limited)
-        supervisor.native.latest_turn = AsyncMock(side_effect=[limited, running])
+        supervisor.native.check_message_target = AsyncMock()
+        server.latest_turn = AsyncMock(side_effect=[limited, limited, running])
+        supervisor.native.latest_turn = AsyncMock(return_value=running)
         sender = supervisor.native.send
     await supervisor.recover_pending(account_identity("acc-1").fingerprint)
     await asyncio.gather(*tuple(supervisor.tasks))
@@ -574,7 +575,6 @@ async def test_two_desktop_jobs_continue_while_ide_reconnects_then_recovers(migr
     await SettingsRepository().set("ide_continue", "true")
     server = ExecutionServer()
     limited = {"id": "last", "status": "failed", "error": {"codexErrorInfo": "usageLimitExceeded"}}
-    server.latest_turn = AsyncMock(return_value=limited)
     supervisor = ContinuationSupervisor(factory=lambda: server)
     sent = []
 
@@ -587,7 +587,9 @@ async def test_two_desktop_jobs_continue_while_ide_reconnects_then_recovers(migr
     async def ide_turn(tid):
         return OwnerSnapshot("owner", await desktop_turn(tid), tid in sent, None)
 
+    server.latest_turn = desktop_turn
     supervisor.native.latest_turn = AsyncMock(side_effect=desktop_turn)
+    supervisor.native.check_message_target = AsyncMock()
     supervisor.native.send = AsyncMock(side_effect=send)
     supervisor.ide.wait_inspect = AsyncMock(side_effect=ConnectionNotReadyError("restarting"))
     supervisor.ide.inspect = AsyncMock(side_effect=ide_turn)

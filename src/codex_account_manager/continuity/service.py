@@ -599,18 +599,15 @@ class ContinuityService:
             ):
                 raise HandoffDeferredError("Account switch stopped because monitoring changed.")
             desktop_observations.update(set(await self.tracker.ids()) - self._restart_independent)
-            if reason != HandoffReason.MANUAL:
+            if reason != HandoffReason.MANUAL or not owner_key:
                 return
             assert target is not None and target.bound_account_id is not None
-            candidate_goals = {
-                row.thread_id for row in await self.tracker.visible() if row.goal_present
-            }
-            for thread_id, _turn_id, _signature in await self.tracker.unfinished():
-                if thread_id not in candidate_goals or thread_id in desktop_threads:
+            for thread_id in await self.tracker.ids(owner_key):
+                if thread_id not in desktop_observations or thread_id in desktop_threads:
                     continue
                 try:
                     async with asyncio.timeout(2):
-                        ticket = await self.automation.prepare(thread_id, running_goal_only=True)
+                        ticket = await self.automation.prepare(thread_id, capture_running=True)
                     if ticket is None:
                         continue
                     queued = replace(
@@ -642,7 +639,10 @@ class ContinuityService:
         for thread_id, turn_id, signature in saved:
             try:
                 async with asyncio.timeout(12):
-                    ticket = await self.automation.prepare(thread_id)
+                    if reason == HandoffReason.MANUAL:
+                        ticket = await self.automation.prepare(thread_id, report_unlimited=False)
+                    else:
+                        ticket = await self.automation.prepare(thread_id)
                 if (
                     ticket
                     and (ticket.turn_id == turn_id or reason == HandoffReason.MANUAL)
@@ -735,7 +735,7 @@ class ContinuityService:
                             ticket.goal_signature,
                             desktop=ticket.desktop,
                             owner_id=ticket.owner_id,
-                            resume_active_goal=ticket.resume_active_goal,
+                            resume_running_turn=ticket.resume_running_turn,
                             owner_key=target.identity.fingerprint,
                         )
                         for ticket in tickets

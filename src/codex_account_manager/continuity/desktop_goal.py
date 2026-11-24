@@ -73,7 +73,7 @@ class DesktopGoalObserver:
                     True,
                     None,
                     time.time(),
-                    ticket.resume_active_goal,
+                    ticket.resume_running_turn,
                     ticket.owner_key,
                 ),
             )
@@ -197,11 +197,11 @@ class DesktopGoalObserver:
                 turn = await adapter.latest_turn(ticket.thread_id)
                 activity = await owner.native.thread_status(ticket.thread_id)
                 if activity == "active":
-                    if ticket.resume_active_goal and turn and turn.get("id") == ticket.turn_id:
+                    if ticket.resume_running_turn and turn and turn.get("id") == ticket.turn_id:
                         turn = {**turn, "status": "inProgress"}
                     if (
                         turn
-                        and (turn.get("id") != ticket.turn_id or ticket.resume_active_goal)
+                        and (turn.get("id") != ticket.turn_id or ticket.resume_running_turn)
                         and turn.get("status") == "inProgress"
                     ):
                         await owner.tracker.observe(
@@ -222,7 +222,7 @@ class DesktopGoalObserver:
                     return "stopped"
                 if (
                     reopen
-                    and not ticket.resume_active_goal
+                    and not ticket.resume_running_turn
                     and activity == "idle"
                     and account.ordinary_usage_allowed is True
                 ):

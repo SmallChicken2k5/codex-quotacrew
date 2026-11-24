@@ -59,6 +59,7 @@ class ConversationsView(BaseView):
         self._project_names: dict[str, str] = {}
         self._busy = False
         self._tracking_busy = False
+        self._tracking_refresh_requested = False
         self._tracked: list[ObservedWork] = []
         self._support_busy = False
         self._continue_busy = False
@@ -364,7 +365,9 @@ class ConversationsView(BaseView):
 
     def refresh_tracking(self) -> None:
         if self._tracking_busy:
+            self._tracking_refresh_requested = True
             return
+        self._tracking_refresh_requested = False
         self._tracking_busy = True
         self.set_loading("tracking", True)
         self.runner.submit(self._tracking_snapshot(), self._render_tracking, self._tracking_failed)
@@ -451,6 +454,8 @@ class ConversationsView(BaseView):
         self._tracking_busy = False
         self.set_loading("tracking", False)
         self.tracking_status.setText(tr("Tracked work could not be loaded. Refresh to try again."))
+        if self._tracking_refresh_requested:
+            self.refresh_tracking()
 
     def _render_tracking(self, snapshot: tuple[list[ObservedWork], dict[str, str]]) -> None:
         self.set_loading("tracking", False)
@@ -570,6 +575,9 @@ class ConversationsView(BaseView):
                     self.tracked_table.selectRow(row)
                     break
         self._tracked_selected()
+
+        if self._tracking_refresh_requested:
+            self.refresh_tracking()
 
     def _tracked_selected(self) -> None:
         selected = bool(self.tracked_table.selectedItems())

@@ -1,4 +1,6 @@
+import asyncio
 import json
+from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -149,6 +151,27 @@ async def test_native_activity_rejects_unverified_identity(fault):
         await client.thread_status("thread")
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"id": "other"},
+        {"kind": "chatgpt"},
+        {"hostId": "remote"},
+        {"status": {"type": "idle", "activeFlags": ["waitingOnApproval"]}},
+        {"status": {"type": "notLoaded", "activeFlags": ["waitingOnApproval"]}},
+        {"status": {"type": "systemError"}},
+        {"status": None},
+    ],
+)
+async def test_metadata_cannot_authorize_input_with_unverified_identity_or_state(change):
+    client = native.NativeDesktop()
+    thread = {"id": "thread", "kind": "codex", "hostId": "local", "status": {"type": "idle"}}
+    client._call = AsyncMock(return_value={"schemaVersion": 1, "thread": {**thread, **change}})
+    with pytest.raises(AppServerError):
+        await client.check_message_target("thread")
+    client._call.assert_awaited_once()
+
+
 async def test_desktop_continuation_does_not_navigate_renderer(migrated_db, monkeypatch):
     from codex_account_manager.platform import windows
 
@@ -156,15 +179,153 @@ async def test_desktop_continuation_does_not_navigate_renderer(migrated_db, monk
     events = []
     monkeypatch.setattr(windows, "open_conversation", lambda tid: events.append(("open", tid)))
 
-    async def ready(tid):
-        events.append(("ready", tid))
-        return source
+    async def ready(tid, *, wait=False):
+        events.append(("ready", tid, wait))
 
-    supervisor.native.wait_latest_turn = ready
-    supervisor.native.latest_turn.side_effect = [source, {"id": "next", "status": "inProgress"}]
+    supervisor.native.check_message_target = ready
+    running = {"id": "next", "status": "inProgress"}
+    server.latest_turn = AsyncMock(side_effect=[source, source, running])
+    supervisor.native.latest_turn.return_value = running
     await supervisor.run(ticket)
     supervisor.native.send.assert_awaited_once_with("thread", "last")
-    assert events == [("ready", "thread")]
+    assert events == [("ready", "thread", True), ("ready", "thread", False)]
+
+
+@pytest.mark.parametrize("activity", ["idle", "active", "notLoaded"])
+async def test_large_interrupted_turn_uses_live_metadata_before_sending(
+    migrated_db, monkeypatch, activity
+):
+    supervisor, server, source, ticket = setup_native()
+    running = {"id": "next", "status": "inProgress"}
+    server.latest_turn = AsyncMock(side_effect=[source, source, source, running])
+    requests = []
+    sent = False
+
+    def exchange(payload, _cancelled, _timeout):
+        nonlocal sent
+        params = payload["params"]
+        tool, arguments = params["tool"], params["arguments"]
+        requests.append((tool, arguments.get("includeTurns")))
+        if tool == "send_message_to_thread":
+            sent = True
+            data = {"threadId": "thread"}
+        else:
+            thread = {
+                "id": "thread",
+                "kind": "codex",
+                "hostId": "local",
+                "status": {"type": "notLoaded" if len(requests) == 2 else activity},
+            }
+            if len(requests) == 1:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "error": {"message": "Codex app tool request failed"},
+                }
+            if arguments.get("includeTurns") is False:
+                data = {"schemaVersion": 1, "thread": thread, "turns": []}
+            else:
+                if not sent or server.latest_turn.await_count < 4:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": payload["id"],
+                        "result": {
+                            "success": False,
+                            "contentItems": [
+                                {
+                                    "type": "text",
+                                    "text": "Thread history exceeds the read size limit.",
+                                }
+                            ],
+                        },
+                    }
+                data = {"thread": thread, "turns": [running]}
+        response = reply(data)
+        response["id"] = payload["id"]
+        return response
+
+    monkeypatch.setattr(native, "_exchange", exchange)
+    supervisor.native = native.NativeDesktop()
+    await supervisor.run(ticket)
+    assert requests[:3] == [("read_thread", False)] * 3
+    assert sent == (activity in {"idle", "notLoaded"})
+    if sent:
+        assert (await supervisor.tracker.visible())[0].turn_status == "inProgress"
+    async with connect() as db:
+        rows = await (await db.execute("SELECT status FROM continuation_attempts")).fetchall()
+    assert rows == ([("submitted",)] if sent else [])
+
+
+@pytest.mark.parametrize(
+    "changed_turn",
+    [
+        {"id": "new", "status": "failed", "error": {"codexErrorInfo": "usageLimitExceeded"}},
+        {"id": "last", "status": "inProgress"},
+        {"id": "last", "status": "failed", "error": None},
+    ],
+)
+async def test_unloaded_target_requires_same_quota_failure_at_delivery(migrated_db, changed_turn):
+    supervisor, server, source, ticket = setup_native()
+    supervisor.native = native.NativeDesktop()
+    thread = {"id": "thread", "hostId": "local", "kind": "codex", "status": {"type": "notLoaded"}}
+    supervisor.native._call = AsyncMock(return_value={"schemaVersion": 1, "thread": thread})
+    supervisor.native.send = AsyncMock()
+    server.latest_turn = AsyncMock(side_effect=[source, changed_turn])
+    await supervisor.run(ticket)
+    supervisor.native.send.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("turn", "status"),
+    [
+        ("inProgress", {"type": "active", "activeFlags": ["waitingOnApproval"]}),
+        ("inProgress", {"type": "active"}),
+        ("interrupted", {"type": "active", "activeFlags": []}),
+        ("inProgress", {"type": "notLoaded"}),
+    ],
+)
+async def test_manual_switch_requires_consistent_desktop_activity(turn, status):
+    client = native.NativeDesktop()
+    client.call = AsyncMock(
+        return_value={
+            "thread": {"id": "thread", "kind": "codex", "hostId": "local", "status": status},
+            "turns": [{"id": "last", "status": turn}],
+        }
+    )
+    with pytest.raises(AppServerError):
+        await client.manual_switch_turn("thread")
+
+
+@pytest.mark.parametrize(
+    "final_turn",
+    [
+        {"id": "new", "status": "interrupted"},
+        {"id": "last", "status": "completed"},
+        {"id": "last", "status": "inProgress"},
+        {"id": "desktop-resumed", "status": "inProgress"},
+        {"id": "desktop-resumed", "status": "completed"},
+        {"id": "last", "status": "interrupted", "error": {"message": "unknown"}},
+    ],
+)
+async def test_recovered_manual_message_rechecks_interruption(migrated_db, final_turn):
+    supervisor, _, _, ticket = setup_native()
+    ticket = replace(ticket, resume_running_turn=True)
+    supervisor.report = AsyncMock()
+    supervisor.native.manual_switch_turn = AsyncMock(
+        side_effect=[{"id": "last", "status": "interrupted"}, final_turn]
+    )
+    await supervisor.save_pending([ticket])
+    await supervisor.recover_pending(ticket.owner_key)
+    await asyncio.gather(*tuple(supervisor.tasks))
+    assert supervisor.native.manual_switch_turn.await_count == 2
+    supervisor.native.send.assert_not_awaited()
+    state = final_turn["status"]
+    if state in {"inProgress", "completed"}:
+        supervisor.report.assert_awaited_once_with(
+            "thread", "running" if state == "inProgress" else "completed", "desktop_activity"
+        )
+    else:
+        supervisor.report.assert_awaited_once_with("thread", "needs_user", "verification")
 
 
 @pytest.mark.parametrize("bad", ["", "../thread", "a\n", "a?prompt=b", "a" * 129])
@@ -177,9 +338,11 @@ def setup_native():
     server = ExecutionServer()
     supervisor = ContinuationSupervisor(factory=lambda: server)
     source = {"id": "last", "status": "failed", "error": {"codexErrorInfo": "usageLimitExceeded"}}
+    server.latest = source
     supervisor.native.latest_turn = AsyncMock(return_value=source)
     supervisor.native.send = AsyncMock(return_value={"accepted": True})
     supervisor.native.thread_status = AsyncMock(return_value="idle")
+    supervisor.native.check_message_target = AsyncMock()
     ticket = ContinuationTicket(
         "thread",
         "last",
@@ -245,14 +408,14 @@ async def test_unverified_history_size_cannot_fall_back_to_native_loading():
     client.latest_turn.assert_not_awaited()
 
 
-async def test_native_read_rejection_cannot_prove_delivery_readiness():
+async def test_rejected_native_observation_does_not_use_stored_fallback():
     server = ExecutionServer()
     server.verified_stored_turn = AsyncMock(return_value=server.latest)
     client = native.NativeDesktop()
     client.latest_turn = AsyncMock(
         side_effect=NativeOperationRejectedError("Desktop rejected the native operation.")
     )
-    with pytest.raises(NativeOperationRejectedError):
+    with pytest.raises(NativeOperationRejectedError, match="Desktop rejected"):
         await native.verified_desktop_turn(client, server, "thread")
     server.verified_stored_turn.assert_not_awaited()
 
@@ -272,15 +435,17 @@ async def test_startup_generic_rejection_waits_for_native_readiness():
     assert all(not call.kwargs.get("send") for call in client.call.await_args_list)
 
 
-async def test_generic_readiness_rejection_expires_without_claim(migrated_db, monkeypatch):
-    supervisor, server, source, ticket = setup_native()
-    server.verified_stored_turn = AsyncMock(return_value=source)
-    supervisor.native.latest_turn = AsyncMock(side_effect=NativeOperationRejectedError("not ready"))
-    wait = supervisor.native.wait_latest_turn
-    supervisor.native.wait_latest_turn = lambda tid: wait(tid, timeout=0.01)
+async def test_generic_readiness_rejection_expires_without_claim(migrated_db):
+    supervisor, server, _, ticket = setup_native()
+    client = supervisor.native = native.NativeDesktop()
+    client.send = AsyncMock()
+    client._call = AsyncMock(side_effect=NativeOperationRejectedError("not ready"))
+    wait = client._wait_for_read
+    client._wait_for_read = lambda read, _timeout: wait(read, timeout=0.01)
     with pytest.raises(ConnectionNotReadyError):
         await supervisor.run(ticket)
     supervisor.native.send.assert_not_awaited()
+    assert not server.turn_calls
     async with connect() as db:
         assert not await (await db.execute("SELECT * FROM continuation_attempts")).fetchall()
 
@@ -369,7 +534,7 @@ async def test_large_goal_preparation_releases_only_unsent_size_block(migrated_d
 
 @pytest.mark.parametrize("old_status", ["history_too_large", "uncertain", "submitted", "sending"])
 async def test_newly_bounded_history_releases_only_unsent_size_block(migrated_db, old_status):
-    supervisor, _server, _source, ticket = setup_native()
+    supervisor, server, _, ticket = setup_native()
     async with connect() as db:
         await db.execute(
             "INSERT INTO continuation_attempts VALUES ('thread', 'last', 'prior', ?)",
@@ -378,7 +543,8 @@ async def test_newly_bounded_history_releases_only_unsent_size_block(migrated_db
         await db.commit()
 
     async def send(*_args):
-        supervisor.native.latest_turn.return_value = {"id": "next", "status": "inProgress"}
+        server.latest = {"id": "next", "status": "inProgress"}
+        supervisor.native.latest_turn.return_value = server.latest
         return {"accepted": True}
 
     supervisor.native.send.side_effect = send
@@ -391,16 +557,6 @@ async def test_newly_bounded_history_releases_only_unsent_size_block(migrated_db
     async with connect() as db:
         statuses = await (await db.execute("SELECT status FROM continuation_attempts")).fetchall()
     assert statuses == [("submitted" if old_status == "history_too_large" else old_status,)]
-
-
-async def test_rejected_native_read_without_lifecycle_stays_unknown():
-    server = ExecutionServer()
-    client = native.NativeDesktop()
-    client.latest_turn = AsyncMock(
-        side_effect=NativeOperationRejectedError("Desktop rejected the native operation.")
-    )
-    with pytest.raises(AppServerError, match="Desktop rejected"):
-        await native.verified_desktop_turn(client, server, "thread")
 
 
 async def test_native_identity_mismatch_cannot_use_stored_fallback():
@@ -424,9 +580,9 @@ async def test_oversized_history_never_reaches_native_loading(migrated_db):
     server.require_bounded_desktop_history = AsyncMock(
         side_effect=ConversationHistoryTooLargeError("too large")
     )
-    supervisor.native.wait_latest_turn = AsyncMock()
+    supervisor.native.check_message_target = AsyncMock()
     await supervisor.run(ticket)
-    supervisor.native.wait_latest_turn.assert_not_awaited()
+    supervisor.native.check_message_target.assert_not_awaited()
     supervisor.native.send.assert_not_awaited()
     async with connect() as db:
         rows = await (await db.execute("SELECT status FROM continuation_attempts")).fetchall()
@@ -527,23 +683,11 @@ async def test_goal_already_resumed_before_worker_is_observed_without_input(migr
     assert (await supervisor.tracker.visible())[0].turn_status == "inProgress"
 
 
-async def test_continuation_delivery_never_uses_server_fallback_for_native_send(migrated_db):
-    supervisor, server, source, ticket = setup_native()
-    supervisor.native.wait_latest_turn = AsyncMock(
-        side_effect=ConnectionNotReadyError("native unavailable")
-    )
-
-    with pytest.raises(ConnectionNotReadyError):
-        await supervisor.run(ticket)
-
-    supervisor.native.send.assert_not_awaited()
-    assert not server.turn_calls
-
-
 async def test_native_delivery_stays_in_desktop_and_tracks_next_account_limit(migrated_db):
     supervisor, server, source, ticket = setup_native()
     running = {"id": "native-next", "status": "inProgress"}
-    supervisor.native.latest_turn.side_effect = [source, source, running]
+    server.latest_turn = AsyncMock(side_effect=[source, source, running, source, source])
+    supervisor.native.latest_turn.return_value = running
     await supervisor.run(ticket)
     supervisor.native.send.assert_awaited_once_with("thread", "last")
     assert not server.resume_calls and not server.turn_calls
@@ -571,8 +715,8 @@ async def test_routing_401_is_reported_as_authentication_not_quota(migrated_db):
         "status": "failed",
         "error": {"message": "workspace routing discovery unauthorized (401)"},
     }
-    supervisor.native.latest_turn.side_effect = [source, source, rejected]
-    server.latest_turn = AsyncMock(return_value=rejected)
+    supervisor.native.latest_turn.return_value = rejected
+    server.latest_turn = AsyncMock(side_effect=[source, source, rejected, rejected])
     supervisor.report = AsyncMock()
     await supervisor.run(ticket)
     supervisor.report.assert_any_await("thread", "needs_user", "authentication")
@@ -605,9 +749,9 @@ async def test_native_delivery_stops_on_conflicts_and_never_retries_uncertain(mi
             owner_key=account_identity("other").fingerprint,
         )
     elif fault == "new_turn":
-        supervisor.native.latest_turn.return_value = {**source, "id": "new"}
+        server.latest = {**source, "id": "new"}
     elif fault == "running":
-        supervisor.native.latest_turn.return_value = {**source, "status": "inProgress"}
+        server.latest = {**source, "status": "inProgress"}
     elif fault == "goal":
         ticket = ContinuationTicket(
             "thread",
@@ -882,13 +1026,8 @@ async def test_stalled_post_send_observation_releases_lock_without_resending(
     )
     supervisor, server, source, ticket = setup_native()
     cancelled = asyncio.Event()
-    calls = 0
 
     async def latest(_thread):
-        nonlocal calls
-        calls += 1
-        if calls <= 2:
-            return source
         try:
             observation_timeout.reschedule(asyncio.get_running_loop().time())
             await asyncio.Event().wait()
@@ -896,6 +1035,9 @@ async def test_stalled_post_send_observation_releases_lock_without_resending(
             cancelled.set()
 
     supervisor.native.latest_turn.side_effect = latest
+    server.latest_turn = AsyncMock(
+        side_effect=[source, source, {"id": "next", "status": "inProgress"}, source, source]
+    )
     await asyncio.wait_for(supervisor.run(ticket), 2)
     assert cancelled.is_set()
     assert server.closed
@@ -911,38 +1053,21 @@ async def test_stalled_post_send_observation_releases_lock_without_resending(
     supervisor.native.send.assert_awaited_once()
 
 
-async def test_desktop_summary_uses_matching_structured_quota_error(migrated_db):
-    supervisor, server, source, ticket = setup_native()
-    server.latest = source
-    summary = {**source, "error": {"message": "A localized limit message"}}
-    supervisor.native.latest_turn.side_effect = [
-        summary,
-        summary,
-        {"id": "next", "status": "inProgress"},
-    ]
-    await supervisor.run(ticket)
-    supervisor.native.send.assert_awaited_once_with("thread", "last")
-    assert (await supervisor.tracker.visible())[0].turn_status == "inProgress"
-
-
 @pytest.mark.parametrize(
     "stored", [None, {"id": "old", "status": "failed"}, {"id": "last", "status": "inProgress"}]
 )
-async def test_desktop_summary_rejects_unmatched_stored_failure(migrated_db, stored):
-    supervisor, server, source, ticket = setup_native()
-    supervisor.native.latest_turn.return_value = {
-        **source,
-        "error": {"message": "usage limit exceeded"},
-    }
+async def test_desktop_delivery_rejects_unmatched_stored_failure(migrated_db, stored):
+    supervisor, server, _, ticket = setup_native()
     server.latest = stored
     await supervisor.run(ticket)
     supervisor.native.send.assert_not_awaited()
 
 
-async def test_desktop_summary_does_not_infer_quota_from_error_message(migrated_db):
+async def test_desktop_delivery_does_not_infer_quota_from_error_message(migrated_db):
     supervisor, server, source, ticket = setup_native()
-    summary = {**source, "error": {"message": "usage limit exceeded"}}
-    supervisor.native.latest_turn.return_value = summary
-    server.latest = {**source, "error": {"codexErrorInfo": "internalServerError"}}
+    server.latest = {
+        **source,
+        "error": {"message": "usage limit exceeded", "codexErrorInfo": "internalServerError"},
+    }
     await supervisor.run(ticket)
     supervisor.native.send.assert_not_awaited()

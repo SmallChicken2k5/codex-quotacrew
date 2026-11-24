@@ -306,7 +306,8 @@ TR = {
     "Account operation in progress. Refresh will retry automatically.": "Hesap işlemi sürüyor. Bilgiler otomatik olarak yeniden kontrol edilecek.",
     "Account check timed out. Try refreshing again.": "Hesap kontrolü zaman aşımına uğradı. Yeniden yenilemeyi deneyin.",
     "Account switching is waiting because this conversation shares the Desktop process that must restart. Other independent work can continue.": "Bu konuşma, yeniden başlatılması gereken Desktop sürecini paylaştığı için hesap geçişi bekliyor. Diğer bağımsız işler devam edebilir.",
-    "{count} conversations need attention. Other independent work can continue. See Jobs for details.": "{count} konuşma için müdahale gerekiyor. Diğer bağımsız işler devam edebilir. Ayrıntılar için İşler sayfasına bakın.",
+    "Waiting to reconnect {count} conversations. QuotaCrew retries automatically while monitoring is on.": "{count} sohbet için bağlantı bekleniyor. İzleme açıkken QuotaCrew otomatik olarak yeniden deneyecek.",
+    "See Jobs for the continuation status of {count} conversations.": "{count} sohbetin devam durumunu İşler sayfasında görebilirsiniz.",
     "Shared Desktop restart": "Ortak Desktop sürecinin yeniden başlatılması",
     "Waiting for a shared resource": "Ortak kaynak bekleniyor",
     "The conversation responded, but its state exceeds the supported size. No message was sent.": "Konuşma bağlantısı yanıt verdi ancak durum verisi desteklenen boyutu aşıyor. Mesaj gönderilmedi.",
@@ -690,6 +691,8 @@ TR = {
     "With monitoring and continuation enabled, a verified usage-limit interruption can continue after an account switch. The exact turn and goal are checked again before input is sent. Unknown state, approval requests and user pauses stop automation. Merely opening a conversation or saving a local goal note does not start work.": "İzleme ve otomatik devam açıkken, kullanım limitiyle kesildiği doğrulanan iş hesap geçişinden sonra sürdürülebilir. Mesaj gönderilmeden aynı tur ve hedef yeniden kontrol edilir. Bilinmeyen durum, onay isteği ve kullanıcının duraklatması otomasyonu durdurur. Konuşmayı açmak veya yerel hedef notu kaydetmek iş başlatmaz.",
     "Automatic continuation needs attention. Open the conversation in Codex; approval, input or an error may require your action.": "Otomatik devam için müdahaleniz gerekiyor. Konuşmayı Codex üzerinden açın; onay, yanıt veya hata kontrolü gerekebilir.",
     "Automatic continuation stopped. Your pauses and goal limits are preserved.": "Otomatik devam durdu. Duraklatmalarınız ve hedef sınırlarınız korunuyor.",
+    "The conversation is running in Codex Desktop.": "Sohbet Codex Desktop’ta çalışıyor.",
+    "The conversation finished in Codex Desktop.": "Sohbet Codex Desktop’ta tamamlandı.",
     "Automatic continuation finished. Review the result in Codex.": "Otomatik devam tamamlandı. Sonucu Codex üzerinden inceleyin.",
     "Continuing interrupted work automatically. Disable continuation in Settings to stop.": "Kesilen işe otomatik devam ediliyor. Durdurmak için Ayarlar bölümündeki otomatik devam seçeneğini kapatın.",
     "After a verified usage-limit interruption, continue the same conversation and its active goal. Pauses, goal budgets and approval requests are respected. Turn this off to stop automatic work.": "Kullanım limiti nedeniyle kesildiği doğrulanan konuşmaya ve aktif hedefine devam eder. Duraklatmalar, hedef bütçeleri ve onay talepleri korunur. Otomatik çalışmayı durdurmak için bu seçeneği kapatın.",
@@ -1070,6 +1073,7 @@ def source_label(value: str | None) -> str:
 
 def continuation_detail(payload: dict) -> str:
     stages = {
+        "desktop_activity": "Conversation state verification",
         "authentication": "Codex authentication",
         "goal_activation": "Opening conversation for its goal",
         "recovery": "Recovering prepared continuation",

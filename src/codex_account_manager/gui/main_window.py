@@ -88,9 +88,8 @@ class MainWindow(QMainWindow):
         self._running_work = 0
         self._unverified_work = 0
         self._work_snapshot: frozenset[tuple] = frozenset()
-        self._continuation_issues: dict[str, str] = {}
+        self._continuation_issues: dict[str, tuple[str, str]] = {}
         self._dismissed_continuation_issues: dict[str, str] = {}
-        self._shared_waits: set[str] = set()
         self.runner.failed.connect(self._operation_failed)
         self._bridge = _EventBridge(self)
         self._bridge.received.connect(self._domain_event)
@@ -791,12 +790,19 @@ class MainWindow(QMainWindow):
         self.toast_timer.start(4500)
 
     def _dismiss_notice(self) -> None:
-        self._dismissed_continuation_issues.update(self._continuation_issues)
+        self._dismissed_continuation_issues.update(
+            (key, text) for key, (_, text) in self._continuation_issues.items()
+        )
         self._dismissed_continuation_issues[""] = self.notice_text.text()
         self.notice.hide()
 
     def _expire_continuation_notice(self, thread_id: str, message: str) -> None:
-        current = self._continuation_issues.get(thread_id) if thread_id else self.notice_text.text()
+        current = self.notice_text.text()
+        if thread_id:
+            issue = self._continuation_issues.get(thread_id)
+            if issue is None:
+                return
+            current = issue[1]
         if current != message:
             return
         self._dismissed_continuation_issues[thread_id] = message
@@ -804,22 +810,26 @@ class MainWindow(QMainWindow):
             self.notice.hide()
 
     def _show_continuation_issues(self) -> bool:
-        visible = {
-            key: message
-            for key, message in self._continuation_issues.items()
-            if self._dismissed_continuation_issues.get(key) != message
-        }
+        visible = [
+            issue
+            for key, issue in self._continuation_issues.items()
+            if self._dismissed_continuation_issues.get(key) != issue[1]
+        ]
         if not visible:
             return False
         self._notice_timer.stop()
-        self.notice_text.setText(
-            next(iter(visible.values()))
-            if len(visible) == 1
-            else tr(
-                "{count} conversations need attention. Other independent work can continue. See Jobs for details.",
+        if len(visible) == 1:
+            message = visible[0][1]
+        elif all(state == "waiting_connection" for state, _ in visible):
+            message = tr(
+                "Waiting to reconnect {count} conversations. QuotaCrew retries automatically while monitoring is on.",
                 count=len(visible),
             )
-        )
+        else:
+            message = tr(
+                "See Jobs for the continuation status of {count} conversations.", count=len(visible)
+            )
+        self.notice_text.setText(message)
         self.notice.show()
         return True
 
@@ -876,10 +886,11 @@ class MainWindow(QMainWindow):
             self.notice.hide()
             self.statusBar().showMessage(tr("Account switched successfully."), 4500)
             self.dashboard.refresh()
-            if self._shared_waits:
-                for thread_id in self._shared_waits:
+            if self._continuation_issues:
+                for thread_id, (state, _) in list(self._continuation_issues.items()):
+                    if state != "waiting_shared":
+                        continue
                     self._continuation_issues.pop(thread_id, None)
-                self._shared_waits.clear()
                 if not self._show_continuation_issues():
                     self.notice.hide()
         elif event.topic == "switch.deferred":
@@ -911,6 +922,12 @@ class MainWindow(QMainWindow):
                 "skipped": "Automatic continuation was skipped. See the work details.",
             }
             message = tr(messages.get(event.payload["state"], messages["needs_user"]))
+            if event.payload.get("stage") == "desktop_activity":
+                message = tr(
+                    "The conversation is running in Codex Desktop."
+                    if event.payload["state"] == "running"
+                    else "The conversation finished in Codex Desktop."
+                )
             if event.payload.get("stage") == "authentication":
                 message = tr(
                     "Codex rejected the continuation with an authentication error (401). This is not a quota result. Check the active account in the affected Codex window; the message will not be sent again automatically."
@@ -933,7 +950,7 @@ class MainWindow(QMainWindow):
                 message = tr(
                     "Automatic continuation could not be verified. This does not mean your account quota is exhausted. See Jobs for details."
                 )
-            if event.payload.get("stage"):
+            if event.payload.get("stage") and event.payload["stage"] != "desktop_activity":
                 message += " " + continuation_detail(event.payload)
             self.statusBar().showMessage(message)
             thread_id = event.payload.get("thread_id")
@@ -944,12 +961,8 @@ class MainWindow(QMainWindow):
                 "waiting_shared",
             }
             if thread_id:
-                if event.payload.get("state") == "waiting_shared":
-                    self._shared_waits.add(thread_id)
-                else:
-                    self._shared_waits.discard(thread_id)
                 if needs_attention:
-                    self._continuation_issues[thread_id] = message
+                    self._continuation_issues[thread_id] = (event.payload["state"], message)
                 else:
                     self._continuation_issues.pop(thread_id, None)
                     self._dismissed_continuation_issues.pop(thread_id, None)

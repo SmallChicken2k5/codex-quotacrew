@@ -155,10 +155,11 @@ SMART_WEEKLY_MAX_BONUS = 60.0
 SMART_PRIMARY_MAX_BONUS = 8.0
 PRIMARY_WINDOW_MINUTES = 5 * 60
 WEEKLY_WINDOW_MINUTES = 7 * 24 * 60
+RESET_CLOCK_TOLERANCE_SECONDS = 60
 
 
 def _reset_hours(
-    reset: object, window_minutes: object, expected_minutes: int, now: float
+    reset: object, window_minutes: object, expected_minutes: int, now: float | None
 ) -> float | None:
     # App Server reports Unix seconds. Reject milliseconds, expired values and
     # incompatible window metadata instead of guessing units or window roles.
@@ -166,7 +167,7 @@ def _reset_hours(
         isinstance(window_minutes, bool) or window_minutes != expected_minutes
     ):
         return None
-    if isinstance(reset, bool) or not isinstance(reset, (int, float)):
+    if now is None or isinstance(reset, bool) or not isinstance(reset, (int, float)):
         return None
     try:
         if not math.isfinite(reset):
@@ -174,9 +175,11 @@ def _reset_hours(
         seconds = reset - now
     except OverflowError:
         return None
-    if not 0 < seconds <= expected_minutes * 60:
+    window_seconds = expected_minutes * 60
+    # A freshly opened window can be slightly ahead of the local clock.
+    if not 0 < seconds <= window_seconds + RESET_CLOCK_TOLERANCE_SECONDS:
         return None
-    return seconds / 3600
+    return min(seconds, window_seconds) / 3600
 
 
 def _smart_score(h: ProfileHealth, primary_hours: float, weekly_hours: float) -> float:
@@ -229,24 +232,16 @@ class SmartQuotaPolicy(SwitchPolicy):
         )
         times = []
         for h in pool:
-            primary = (
-                _reset_hours(
-                    h.primary_resets_at, h.primary_window_minutes, PRIMARY_WINDOW_MINUTES, timestamp
+            short = (h.primary_resets_at, h.primary_window_minutes)
+            week = (h.secondary_resets_at, h.secondary_window_minutes)
+            if short[1] == WEEKLY_WINDOW_MINUTES and week[1] == PRIMARY_WINDOW_MINUTES:
+                short, week = week, short
+            times.append(
+                (
+                    _reset_hours(*short, PRIMARY_WINDOW_MINUTES, timestamp),
+                    _reset_hours(*week, WEEKLY_WINDOW_MINUTES, timestamp),
                 )
-                if timestamp is not None
-                else None
             )
-            weekly = (
-                _reset_hours(
-                    h.secondary_resets_at,
-                    h.secondary_window_minutes,
-                    WEEKLY_WINDOW_MINUTES,
-                    timestamp,
-                )
-                if timestamp is not None
-                else None
-            )
-            times.append((primary, weekly))
         if not enough or any(p is None or w is None for p, w in times):
             target = min(
                 pool if enough else available,

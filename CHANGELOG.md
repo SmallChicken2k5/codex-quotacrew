@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1 (2026-11-24)
+
+- Resume an ordinary Codex Desktop conversation after a manual account switch when the same running turn was interrupted. If Desktop has already resumed or finished the conversation, show its current state and avoid sending a duplicate message.
+- Verify quota-interrupted turns using lightweight metadata so that a large message or an unloaded Desktop conversation can still resume after a switch.
+- Keep smart account selection consistent when Codex returns the quota windows in reverse order or a reset time is slightly ahead of the local clock.
+- Show when multiple conversations are waiting for an automatic retry and refresh the running-job count when an update arrives during a previous check.
+
 ## 0.5.0 (2026-11-21)
 
 - Added Spanish, Japanese and German to the Windows interface and Store package.

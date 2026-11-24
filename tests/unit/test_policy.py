@@ -151,6 +151,17 @@ def test_smart_selection_scenarios(a, b, expected):
     assert smart_decision(smart_health("a", *a), smart_health("b", *b)).target.alias == expected
 
 
+def test_smart_candidate_is_stable_across_small_reset_clock_differences():
+    expiring = smart_health("expiring", 90, 20, 0.3)
+    full = smart_health("full", 100, 51, 70, primary_hours=5)
+    policy = SmartQuotaPolicy(clock=lambda: NOW)
+    for offset in (-1, 0, 12, 14, 60, 61):
+        later = replace(full, primary_resets_at=int(NOW.timestamp()) + 5 * 3600 + offset)
+        expected = expiring if offset <= 60 else later
+        assert policy._best_candidate(None, [expiring, later]) == expected
+        assert smart_decision(later, expiring).target == expected
+
+
 @pytest.mark.parametrize(
     "bad_reset",
     [
@@ -228,3 +239,19 @@ def test_frequent_primary_reset_does_not_override_weekly_urgency():
     weekly = smart_health("weekly", 75, 30, 2, primary_hours=5)
     primary = smart_health("primary", 75, 55, 72, primary_hours=0.01)
     assert smart_decision(weekly, primary).target == weekly
+
+
+def test_smart_selection_recognizes_weekly_window_in_first_slot():
+    soon = smart_health("soon", 100, 37, 2)
+    later = smart_health("later", 100, 62, 120)
+    swapped = replace(
+        soon,
+        primary_window_minutes=soon.secondary_window_minutes,
+        primary_resets_at=soon.secondary_resets_at,
+        primary_used_percent=soon.secondary_used_percent,
+        secondary_window_minutes=soon.primary_window_minutes,
+        secondary_resets_at=soon.primary_resets_at,
+        secondary_used_percent=soon.primary_used_percent,
+    )
+    assert smart_decision(soon, later).target == soon
+    assert smart_decision(swapped, later).target == swapped

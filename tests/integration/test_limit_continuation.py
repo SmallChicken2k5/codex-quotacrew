@@ -741,12 +741,12 @@ async def test_manual_switch_continues_only_verified_quota_interruptions(
     service = ContinuityService(accounts=accounts)
     service.automation.factory = lambda: fake
 
-    async def latest(thread_id):
+    async def check_message_target(thread_id, *, wait=False):
         if unreachable_first and fake.account_id == "acc-2" and thread_id == "one":
             raise AppServerError("Conversation unavailable")
-        return await fake.latest_turn(thread_id)
 
-    service.automation.native.latest_turn = latest
+    service.automation.native.latest_turn = fake.latest_turn
+    service.automation.native.check_message_target = check_message_target
     for tid in ids:
         await _observed_running(tid, source_account)
     sent = []
@@ -853,7 +853,7 @@ async def test_two_desktop_handoffs_keep_goal_and_follow_new_account(migrated_db
 
 @pytest.mark.parametrize("resumes_on_launch", [False, True])
 @pytest.mark.parametrize("blocked_goal", [None, "paused", "unavailable", "idle", "late", "large"])
-async def test_manual_switch_preserves_live_goals_without_quota_error(
+async def test_manual_switch_resumes_running_desktop_work_without_quota_error(
     migrated_db, monkeypatch, resumes_on_launch, blocked_goal
 ):
     import asyncio
@@ -939,7 +939,29 @@ async def test_manual_switch_preserves_live_goals_without_quota_error(
             else "notLoaded"
         )
     )
-    service.automation.native.send = AsyncMock(side_effect=AssertionError("No extra messages"))
+
+    async def read_ordinary(tid, _source):
+        assert tid == "ordinary"
+        turn = dict(fake._turns[tid])
+        if fake.account_id == "acc-2" and not resumes_on_launch:
+            turn["status"] = "interrupted"
+        status = "active" if turn["status"] == "inProgress" else "notLoaded"
+        return {
+            "thread": {
+                "id": tid,
+                "hostId": "local",
+                "kind": "codex",
+                "status": {"type": status, "activeFlags": []},
+            },
+            "turns": [dict(turn)],
+        }
+
+    async def send_ordinary(tid, source):
+        assert (tid, source, fake.account_id) == ("ordinary", "ordinary-turn", "acc-2")
+        fake._turns[tid] = {"id": "continued", "status": "inProgress"}
+
+    service.automation.native.call = AsyncMock(side_effect=read_ordinary)
+    service.automation.native.send = AsyncMock(side_effect=send_ordinary)
     opened = []
 
     def open_goal(tid):
@@ -952,12 +974,14 @@ async def test_manual_switch_preserves_live_goals_without_quota_error(
     class Desktop(FakeDesktop):
         def stop(self):
             super().stop()
-            for tid in (*goals, "ordinary"):
+            # The separate App Server may retain the ordinary turn's pre-restart status.
+            for tid in goals:
                 fake._turns[tid]["status"] = "interrupted"
 
         def launch(self):
             super().launch()
             if resumes_on_launch:
+                fake._turns["ordinary"] = {"id": "desktop-resumed", "status": "inProgress"}
                 for tid in goals:
                     if tid != "goal-one" or blocked_goal in {None, "late", "large"}:
                         fake._turns[tid]["status"] = "inProgress"
@@ -988,6 +1012,13 @@ async def test_manual_switch_preserves_live_goals_without_quota_error(
         eligible.append("late")
     assert sorted(opened) == ([] if resumes_on_launch else eligible)
     rows = {row.thread_id: row for row in await service.tracker.visible()}
+    assert service.automation.native.send.await_count == int(not resumes_on_launch)
+    assert rows["ordinary"].verified and rows["ordinary"].turn_status == "inProgress"
+    assert rows["ordinary"].turn_id == ("desktop-resumed" if resumes_on_launch else "continued")
+    events = await service.events.continuation_history("ordinary")
+    assert [e["payload"]["state"] for e in events] == [
+        "running" if resumes_on_launch else "desktop_submitted"
+    ]
     for tid in eligible:
         assert rows[tid].verified and rows[tid].turn_status == "inProgress"
         assert not rows[tid].continuation_pending
@@ -1004,6 +1035,7 @@ async def test_two_desktop_and_one_ide_limit_continue_after_committed_switch(
 ):
     import asyncio
     from dataclasses import replace
+    from unittest.mock import AsyncMock
 
     import codex_account_manager.continuity.service as cs
     from codex_account_manager.adapters.native_ide import snapshot
@@ -1084,6 +1116,7 @@ async def test_two_desktop_and_one_ide_limit_continue_after_committed_switch(
 
     fake.is_desktop_thread = is_desktop
     service.automation.native.latest_turn = native_latest
+    service.automation.native.check_message_target = AsyncMock()
     service.automation.native.send = native_send
     await service.observe_work()
     assert len(await service.tracker.visible()) == 3

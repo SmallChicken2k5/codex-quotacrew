@@ -67,25 +67,19 @@ async def test_delete_rejects_unmanaged_home(migrated_db, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "setting",
-    ["cli_auth_credentials_store", '"cli_auth_credentials_store"', "'cli_auth_credentials_store'"],
+    "root_config",
+    [
+        "",
+        'cli_auth_credentials_store = "keyring"\n',
+        '"cli_auth_credentials_store" = "keyring"\n',
+        """'cli_auth_credentials_store' = "keyring"\n""",
+    ],
 )
-def test_root_setting_does_not_modify_nested_config(tmp_paths, setting):
+def test_root_setting_does_not_modify_nested_config(tmp_paths, root_config):
     import tomllib
 
     config = tmp_paths.shared_codex_home / "config.toml"
-    config.write_text(f'{setting} = "keyring"\n[other]\ncli_auth_credentials_store = "keyring"\n')
-    FileCredentialStore(tmp_paths.shared_codex_home).ensure_file_auth_config()
-    parsed = tomllib.loads(config.read_text())
-    assert parsed["cli_auth_credentials_store"] == "file"
-    assert parsed["other"]["cli_auth_credentials_store"] == "keyring"
-
-
-def test_nested_setting_gets_separate_root_setting(tmp_paths):
-    import tomllib
-
-    config = tmp_paths.shared_codex_home / "config.toml"
-    config.write_text('[other]\ncli_auth_credentials_store = "keyring"\n')
+    config.write_text(root_config + '[other]\ncli_auth_credentials_store = "keyring"\n')
     FileCredentialStore(tmp_paths.shared_codex_home).ensure_file_auth_config()
     parsed = tomllib.loads(config.read_text())
     assert parsed["cli_auth_credentials_store"] == "file"

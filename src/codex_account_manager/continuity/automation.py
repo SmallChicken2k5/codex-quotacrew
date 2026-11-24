@@ -64,7 +64,7 @@ class ContinuationTicket:
     goal_signature: str | None = None
     desktop: bool = False
     owner_id: str | None = None
-    resume_active_goal: bool = False
+    resume_running_turn: bool = False
     owner_key: str | None = None
 
 
@@ -109,12 +109,11 @@ def matches_desktop_interruption(
         or goal_signature(goal) != ticket.goal_signature
     ):
         return False
-    if ticket.resume_active_goal:
+    if ticket.resume_running_turn:
         return bool(
             ticket.desktop
             and not ticket.owner_id
-            and goal.present
-            and goal.status == "active"
+            and (not goal.present or goal.status == "active")
             and goal_allows_continuation(goal)
             and normalize_turn_status(turn.get("status")) == "interrupted"
             and not turn.get("error")
@@ -221,7 +220,7 @@ class ContinuationSupervisor:
         )
 
     async def prepare(
-        self, thread_id: str, *, running_goal_only: bool = False
+        self, thread_id: str, *, capture_running: bool = False, report_unlimited: bool = True
     ) -> ContinuationTicket | None:
         if not await self.enabled():
             await self.report(thread_id, "skipped", "disabled")
@@ -239,13 +238,16 @@ class ContinuationSupervisor:
                 desktop = True
             owner_id = None
             ide_thread = desktop and not await adapter.is_desktop_thread(thread_id)
-            if running_goal_only and (not desktop or ide_thread):
+            if capture_running and (not desktop or ide_thread):
                 return None
             if desktop and not (
                 await self.ide_enabled() if ide_thread else await self.desktop_enabled()
             ):
                 await self.report(thread_id, "skipped", "disabled")
                 return None
+            goal = await adapter.get_goal(thread_id)
+            if goal is None:
+                raise AppServerError("Could not verify the goal before preparing continuation.")
             turn: dict | None
             if ide_thread:
                 turn, owner = await self.owner_turn(adapter, thread_id)
@@ -253,30 +255,34 @@ class ContinuationSupervisor:
                 if owner.blocked:
                     await self.report(thread_id, "needs_user", "owner_busy")
                     return None
-            elif running_goal_only:
+            elif capture_running and not goal.present:
+                await adapter.require_bounded_desktop_history(thread_id)
+                turn = await self.native.manual_switch_turn(thread_id)
+                if turn["status"] != "inProgress":
+                    return None
+            elif capture_running:
                 turn = await adapter.latest_turn(thread_id)
+                if not (
+                    goal.status == "active"
+                    and goal_allows_continuation(goal)
+                    and turn
+                    and normalize_turn_status(turn.get("status")) in {"inProgress", "interrupted"}
+                    and await self.native.thread_status(thread_id) == "active"
+                ):
+                    return None
             else:
                 turn = (
                     await verified_desktop_turn(self.native, adapter, thread_id, prefer_stored=True)
                     if desktop
                     else await adapter.latest_turn(thread_id)
                 )
-            goal = await adapter.get_goal(thread_id)
-            if goal is None:
-                raise AppServerError("Could not verify the goal before preparing continuation.")
-            if running_goal_only:
-                if not (
-                    turn
-                    and turn.get("id")
-                    and normalize_turn_status(turn.get("status")) in {"inProgress", "interrupted"}
-                    and goal.present
-                    and goal.status == "active"
-                    and goal_allows_continuation(goal)
-                    and await self.native.thread_status(thread_id) == "active"
-                ):
-                    return None
-            elif not turn or not has_verified_limit_turn(turn, goal):
-                await self.report(thread_id, "skipped", "verification")
+            if (
+                not turn
+                or not turn.get("id")
+                or (not capture_running and not has_verified_limit_turn(turn, goal))
+            ):
+                if report_unlimited:
+                    await self.report(thread_id, "skipped", "verification")
                 return None
             ticket = ContinuationTicket(
                 thread_id,
@@ -284,7 +290,7 @@ class ContinuationSupervisor:
                 goal_signature=goal_signature(goal),
                 desktop=desktop,
                 owner_id=owner_id,
-                resume_active_goal=running_goal_only,
+                resume_running_turn=capture_running,
             )
             if desktop and not owner_id:
                 if goal.present:
@@ -405,7 +411,7 @@ class ContinuationSupervisor:
                         t.desktop,
                         t.owner_id,
                         time.time(),
-                        t.resume_active_goal,
+                        t.resume_running_turn,
                         t.owner_key,
                     )
                     for t in tickets
@@ -445,7 +451,7 @@ class ContinuationSupervisor:
                 row["goal_signature"],
                 desktop=bool(row["desktop"]),
                 owner_id=row["owner_id"],
-                resume_active_goal=bool(row["resume_active_goal"]),
+                resume_running_turn=bool(row["resume_active_goal"]),
                 owner_key=row["owner_key"],
             )
             if not ticket.owner_key:
@@ -485,10 +491,10 @@ class ContinuationSupervisor:
                 await db.execute("DELETE FROM pending_continuations")
                 await db.commit()
 
-    async def _claim(self, ticket: ContinuationTicket) -> str | None:
+    async def _claim(self, ticket: ContinuationTicket, *, manual_goal: bool = False) -> str | None:
         message_id = str(uuid4())
         async with connect() as db:
-            if ticket.resume_active_goal:
+            if manual_goal:
                 await db.execute(
                     "DELETE FROM continuation_attempts WHERE thread_id=? AND source_turn_id=? "
                     "AND status IN ('goal_resumed','goal_stopped','goal_unconfirmed') "
@@ -702,7 +708,7 @@ class ContinuationSupervisor:
         task = asyncio.current_task()
         loop = asyncio.get_running_loop()
 
-        async def latest_turn(*, wait: bool = False) -> dict:
+        async def latest_turn(*, wait: bool = False, observe: bool = False) -> dict:
             nonlocal owner_snapshot, verified_owner
             if ticket.owner_id:
                 if not await self.ide_enabled():
@@ -714,11 +720,18 @@ class ContinuationSupervisor:
                 return turn
             if not await self.desktop_enabled():
                 raise AppServerError("Desktop continuation is disabled.")
-            if ticket.resume_active_goal:
+            if ticket.resume_running_turn and not goal_activation and not observe:
+                return await self.native.manual_switch_turn(ticket.thread_id, wait=wait)
+            if ticket.resume_running_turn or not goal_activation:
+                if not ticket.resume_running_turn and not observe:
+                    await self.native.check_message_target(ticket.thread_id, wait=wait)
                 stored = await adapter.latest_turn(ticket.thread_id)
                 if not stored:
-                    raise AppServerError("The handed off goal turn could not be verified.")
-                return stored
+                    raise AppServerError("The conversation has no verifiable continuation turn.")
+                # A delivery receipt can precede publication of the new turn.
+                # Avoid loading the oversized source while it is still the latest.
+                if not observe or stored.get("id") == ticket.turn_id:
+                    return stored
             native_turn = await verified_desktop_turn(
                 self.native,
                 adapter,
@@ -729,6 +742,25 @@ class ContinuationSupervisor:
             if not native_turn:
                 raise AppServerError("The conversation has no verifiable continuation turn.")
             return native_turn
+
+        async def observe_manual_turn(turn: dict, goal: GoalInfo | None) -> bool:
+            if (
+                not ticket.resume_running_turn
+                or ticket.owner_id
+                or goal_activation
+                or goal is None
+                or goal.present
+                or goal_signature(goal) != ticket.goal_signature
+                or turn.get("status") not in {"inProgress", "completed"}
+                or turn.get("error")
+            ):
+                return False
+            # Desktop can resume under a new turn ID. Observe it without claiming a send.
+            await self.tracker.observe(ticket.owner_key or "", ticket.thread_id, turn, goal)
+            state = "running" if turn["status"] == "inProgress" else "completed"
+            await self.report(ticket.thread_id, state, "desktop_activity")
+            bus.publish("work.observed")
+            return True
 
         def stop_requested(event) -> None:
             scope = event.payload.get("scope")
@@ -766,22 +798,24 @@ class ContinuationSupervisor:
                 and await self._isolate_large_history(adapter, ticket)
             ):
                 return
-            if not ticket.owner_id and not goal_activation:
-                await self.report(ticket.thread_id, "waiting_connection", "desktop")
             latest = await latest_turn(wait=True)
             stage = "verification"
             goal = await adapter.get_goal(ticket.thread_id)
+            if await observe_manual_turn(latest, goal):
+                return
             if (
-                ticket.resume_active_goal
+                ticket.resume_running_turn
                 and latest.get("id") == ticket.turn_id
                 and normalize_turn_status(latest.get("status")) == "inProgress"
                 and goal is not None
-                and goal.present
-                and goal.status == "active"
                 and goal_allows_continuation(goal)
                 and goal_signature(goal) == ticket.goal_signature
                 and not ticket.owner_id
-                and await self.native.thread_status(ticket.thread_id) == "active"
+                and (
+                    goal.present
+                    and goal.status == "active"
+                    and await self.native.thread_status(ticket.thread_id) == "active"
+                )
             ):
                 await self.tracker.observe(ticket.owner_key or "", ticket.thread_id, latest, goal)
                 await self.report(ticket.thread_id, "running", "observation")
@@ -834,6 +868,12 @@ class ContinuationSupervisor:
             if current.get("id") != ticket.turn_id or normalize_turn_status(
                 current.get("status")
             ) != normalize_turn_status(latest.get("status")):
+                if (
+                    ticket.resume_running_turn
+                    and not goal_activation
+                    and await observe_manual_turn(current, await adapter.get_goal(ticket.thread_id))
+                ):
+                    return
                 raise AppServerError("The Desktop conversation is no longer idle.")
             if not await self.enabled() or not await self._local_allows(ticket.thread_id):
                 return
@@ -877,11 +917,10 @@ class ContinuationSupervisor:
                 or (not final_goal.present and owner_snapshot.goal is not None)
             ):
                 raise AppServerError("The IDE goal or approval state changed.")
-            stage = "journal"
             if goal_activation:
                 stage = "desktop"
                 if await self.native.thread_status(ticket.thread_id) == "active":
-                    if ticket.resume_active_goal:
+                    if ticket.resume_running_turn:
                         await self.tracker.observe(
                             ticket.owner_key or "",
                             ticket.thread_id,
@@ -902,8 +941,10 @@ class ContinuationSupervisor:
                 ):
                     raise AppServerError("The goal changed while Desktop was preparing.")
                 await self._release_history_block(ticket)
-                stage = "journal"
-            message_id = await self._claim(ticket)
+            stage = "journal"
+            message_id = await self._claim(
+                ticket, manual_goal=goal_activation and ticket.resume_running_turn
+            )
             if message_id is None:
                 raise AppServerError("Desktop continuation was already attempted.")
             claimed = True
@@ -939,7 +980,7 @@ class ContinuationSupervisor:
             # Bound post-send observation; preserve the submitted claim on timeout.
             async with asyncio.timeout(DESKTOP_OBSERVATION_SECONDS):
                 for _ in range(10):
-                    turn = await latest_turn()
+                    turn = await latest_turn(observe=True)
                     if turn.get("id") != ticket.turn_id:
                         observed_goal = await adapter.get_goal(ticket.thread_id)
                         if observed_goal is not None:
@@ -974,8 +1015,14 @@ class ContinuationSupervisor:
             if claimed:
                 await self._record(ticket, "uncertain")
             await self.report(ticket.thread_id, "needs_user", stage)
-        except ConnectionNotReadyError:
+        except ConnectionNotReadyError as exc:
             if not claimed and stage in {"desktop", "ide", "verification"}:
+                if stage == "desktop" and not ticket.owner_id:
+                    log.info(
+                        "Desktop continuation deferred before delivery (%s): %s",
+                        type(exc.__cause__ or exc).__name__,
+                        exc,
+                    )
                 raise
             if claimed:
                 await self._record(ticket, "uncertain")
