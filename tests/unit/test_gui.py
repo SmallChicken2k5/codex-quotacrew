@@ -123,9 +123,9 @@ def test_support_buttons_open_only_public_project_links(window, monkeypatch):
             button for button in view.findChildren(QPushButton) if button.text() == tr(title)
         ).click()
     assert opened == [
-        "https://github.com/erkanpulat/codex-quotacrew",
-        "https://github.com/erkanpulat/codex-quotacrew/issues",
-        "https://github.com/erkanpulat/codex-quotacrew/pulls",
+        "https://github.com/erkanpulat/quotacrew-codex-auto-resume",
+        "https://github.com/erkanpulat/quotacrew-codex-auto-resume/issues",
+        "https://github.com/erkanpulat/quotacrew-codex-auto-resume/pulls",
         "https://github.com/erkanpulat",
     ]
 
@@ -333,6 +333,35 @@ def test_running_work_clears_its_previous_attention_notice(window):
     assert not window._continuation_issues
 
 
+def test_desktop_activity_refreshes_badge_after_an_older_snapshot(window, monkeypatch):
+    from codex_account_manager.continuity.tracking import ObservedWork
+    from codex_account_manager.core.events import bus
+
+    view = window.conversations
+    view._render_tracking(([], {}))
+    reads = []
+
+    def submit(coro, done, _failed):
+        coro.close()
+        reads.append(done)
+
+    monkeypatch.setattr(view.runner, "submit", submit)
+    view.refresh_tracking()
+    bus.publish("continuation.status", thread_id="t", state="waiting_connection", stage="desktop")
+    bus.publish("continuation.status", thread_id="t", state="running", stage="desktop_activity")
+    view.refresh_tracking()
+    view.refresh_tracking()
+    assert len(reads) == 1
+    reads.pop()(([], {}))
+    assert len(reads) == 1
+    job = ObservedWork(
+        "t", "account", "inProgress", None, False, False, 1_800_000_000, verified=True
+    )
+    reads.pop()(([job], {}))
+    assert window._running_work == 1 and window.notice.isHidden()
+    assert not reads
+
+
 def test_successful_work_does_not_hide_another_conversations_failure(window):
     from codex_account_manager.core.events import bus
 
@@ -358,6 +387,30 @@ def test_completed_switch_clears_only_shared_dependency_not_other_errors(window)
     assert "IDE" in window.notice_text.text()
     assert set(window._continuation_issues) == {"ide"}
     bus.publish("continuation.status", thread_id="ide", state="completed", stage="execution")
+    assert window.notice.isHidden()
+
+
+def test_waiting_conversations_get_an_automatic_retry_summary(window):
+    from codex_account_manager.core.events import bus
+    from codex_account_manager.gui.i18n import tr
+
+    for tid in ("first", "second"):
+        bus.publish(
+            "continuation.status", thread_id=tid, state="waiting_connection", stage="desktop"
+        )
+    assert window.notice_text.text() == tr(
+        "Waiting to reconnect {count} conversations. QuotaCrew retries automatically while monitoring is on.",
+        count=2,
+    )
+    bus.publish("continuation.status", thread_id="first", state="needs_user", stage="verification")
+    assert window.notice_text.text() == tr(
+        "See Jobs for the continuation status of {count} conversations.", count=2
+    )
+    bus.publish(
+        "continuation.status", thread_id="second", state="desktop_submitted", stage="execution"
+    )
+    assert window.notice_text.text() == window._continuation_issues["first"][1]
+    bus.publish("continuation.status", thread_id="first", state="running", stage="desktop_activity")
     assert window.notice.isHidden()
 
 
@@ -1166,7 +1219,7 @@ def test_transient_continuation_notice_expires_without_hiding_other_issues(windo
     window._domain_event(Event("continuation.status", {"thread_id": "b", "state": "needs_user"}))
     expiry()
     assert not window.notice.isHidden()
-    assert window.notice_text.text() == window._continuation_issues["b"]
+    assert window.notice_text.text() == window._continuation_issues["b"][1]
     window._domain_event(Event("continuation.status", {"thread_id": "b", "state": "completed"}))
     assert window.notice.isHidden()
     window._domain_event(Event("continuation.status", transient))
@@ -2142,7 +2195,7 @@ def test_error_notice_expires_and_duplicate_does_not_resurrect_it(window):
 
 def test_new_continuation_notice_is_not_expired_by_old_error_timer(window):
     window._operation_failed("technical failure")
-    window._continuation_issues["thread"] = "Needs attention"
+    window._continuation_issues["thread"] = ("needs_user", "Needs attention")
     assert window._show_continuation_issues()
     assert not window._notice_timer.isActive()
 
@@ -2840,9 +2893,21 @@ def test_cancelled_work_preparation_cannot_arm_a_plan(window, monkeypatch):
     assert widget.schedule_button.isEnabled() == (os.name == "nt")
 
 
-@pytest.mark.parametrize("locale", ["tr", "en", "pt_BR"])
+@pytest.mark.parametrize(
+    "locale,short,cross_year,full,checked_date",
+    [
+        ("tr", "31.12", "31.12.{yy}", "31.12.{year}", "02.01.{year}"),
+        ("en", "12/31", "12/31/{yy}", "12/31/{year}", "01/02/{year}"),
+        ("pt_BR", "31/12", "31/12/{yy}", "31/12/{year}", "02/01/{year}"),
+        ("es", "31/12", "31/12/{yy}", "31/12/{year}", "02/01/{year}"),
+        ("ja", "12/31", "{year}/12/31", "{year}/12/31", "{year}/01/02"),
+        ("de", "31.12.", "31.12.{yy}", "31.12.{year}", "02.01.{year}"),
+    ],
+)
 @pytest.mark.parametrize("next_year", [False, True])
-def test_subscription_badge_uses_local_dates_and_hides_unreliable_metadata(app, locale, next_year):
+def test_subscription_badge_uses_local_dates_and_hides_unreliable_metadata(
+    app, locale, short, cross_year, full, checked_date, next_year
+):
     from dataclasses import replace
     from datetime import datetime
 
@@ -2863,15 +2928,12 @@ def test_subscription_badge_uses_local_dates_and_hides_unreliable_metadata(app, 
     set_language(locale)
     try:
         card = AccountRow(health)
-        expected = {"tr": "31.12", "en": "12/31", "pt_BR": "31/12"}[locale]
-        separator = "." if locale == "tr" else "/"
-        full_date = expected + separator + str(until.year)
-        if next_year:
-            expected += separator + until.strftime("%y")
+        expected = (cross_year if next_year else short).format(
+            year=until.year, yy=until.strftime("%y")
+        )
         assert card._plan.text() == "Plus · " + expected
-        assert full_date in card._plan.toolTip()
-        checked_date = {"tr": "02.01.", "en": "01/02/", "pt_BR": "02/01/"}[locale]
-        assert checked_date + str(checked.year) in card._plan.toolTip()
+        assert full.format(year=until.year) in card._plan.toolTip()
+        assert checked_date.format(year=checked.year) in card._plan.toolTip()
         for changes in ({"stale": True}, {"account_match": False}, {"subscription_until": now}):
             hidden = AccountRow(replace(health, **changes))
             assert hidden._plan.text() == "Plus"

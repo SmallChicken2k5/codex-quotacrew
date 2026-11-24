@@ -25,19 +25,21 @@ import os
 import re
 import sys
 import threading
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
 from codex_account_manager.codex.status import normalize_turn_status
 from codex_account_manager.core.errors import (
     AppServerError,
     ConnectionNotReadyError,
-    LocalResponseTooLargeError,
     NativeOperationRejectedError,
 )
 
 if TYPE_CHECKING:
     from codex_account_manager.adapters.app_server import CodexAppServer
+
+ReadResult = TypeVar("ReadResult")
 
 MAX_FRAME = 1024 * 1024
 PIPE_NAME = re.compile(r"codex-(?:app-tools|browser-use)-[0-9a-f-]{36}", re.I)
@@ -285,21 +287,79 @@ class NativeDesktop:
                 await asyncio.sleep(0.75 * (2**attempt))
         raise ConnectionNotReadyError("Codex Desktop app channel is not ready.")
 
+    async def check_message_target(self, thread_id: str, *, wait: bool = False) -> None:
+        """Check the local target before the caller verifies the failed quota turn."""
+
+        async def check() -> None:
+            data = await self._call(
+                thread_id,
+                "account-manager-observation",
+                "read_thread",
+                {"threadId": thread_id, "hostId": "local", "includeTurns": False},
+            )
+            thread = data.get("thread")
+            if (
+                data.get("schemaVersion") != 1
+                or not isinstance(thread, dict)
+                or thread.get("id") != thread_id
+                or thread.get("kind") != "codex"
+                or thread.get("hostId") != "local"
+            ):
+                raise AppServerError("Desktop conversation identity could not be verified.")
+            status = thread.get("status")
+            if (
+                not isinstance(status, dict)
+                or status.get("type") not in ("idle", "notLoaded")
+                or status.get("activeFlags", []) != []
+            ):
+                raise AppServerError("Desktop conversation activity prevents continuation.")
+
+        if wait:
+            await self._wait_for_read(check, 20.0)
+        else:
+            try:
+                await check()
+            except (NativeOperationRejectedError, OSError) as exc:
+                raise ConnectionNotReadyError("Desktop conversation state is unavailable.") from exc
+
     async def wait_latest_turn(self, thread_id: str, timeout: float = 20.0) -> dict:
         """Allow Desktop to initialize after restart; retry only read operations."""
+        return await self._wait_for_read(lambda: self.latest_turn(thread_id), timeout)
+
+    async def manual_switch_turn(self, thread_id: str, *, wait: bool = False) -> dict:
+        """Read the turn and its Desktop activity together across a manual restart."""
+
+        async def read() -> dict:
+            data = await self.call(thread_id, "account-manager-observation")
+            turn = read_snapshot(data, thread_id)
+            status = data["thread"].get("status")
+            expected = ("active",) if turn["status"] == "inProgress" else ("idle", "notLoaded")
+            if (
+                not isinstance(status, dict)
+                or status.get("type") not in expected
+                or status.get("activeFlags", None if turn["status"] == "inProgress" else []) != []
+            ):
+                raise AppServerError("Desktop activity does not confirm the manual switch turn.")
+            return turn
+
+        return await self._wait_for_read(read, 20.0) if wait else await read()
+
+    async def _wait_for_read(
+        self, read: Callable[[], Awaitable[ReadResult]], timeout: float
+    ) -> ReadResult:
+        last_failure = None
         try:
             async with asyncio.timeout(timeout):
                 while True:
                     try:
-                        return await self.latest_turn(thread_id)
-                    except LocalResponseTooLargeError:
-                        raise
-                    except (ConnectionNotReadyError, NativeOperationRejectedError, OSError):
+                        return await read()
+                    except (ConnectionNotReadyError, NativeOperationRejectedError, OSError) as exc:
+                        last_failure = exc
                         await asyncio.sleep(0.25)
         except TimeoutError as exc:
-            raise ConnectionNotReadyError(
-                "Desktop native connection did not become ready."
-            ) from exc
+            raise ConnectionNotReadyError("Desktop native connection did not become ready.") from (
+                last_failure or exc
+            )
 
     async def send(self, thread_id: str, source_turn_id: str) -> dict:
         # A restarted Desktop can expose its process before its app-tools window

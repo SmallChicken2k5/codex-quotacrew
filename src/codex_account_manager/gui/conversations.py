@@ -28,7 +28,13 @@ from codex_account_manager.core.events import bus
 from codex_account_manager.domain.models import ThreadRecord
 from codex_account_manager.gui.async_runner import AsyncRunner
 from codex_account_manager.gui.design import DARK, make_icon, set_button_icon
-from codex_account_manager.gui.i18n import source_label, state_label, tr, work_status
+from codex_account_manager.gui.i18n import (
+    format_timestamp,
+    source_label,
+    state_label,
+    tr,
+    work_status,
+)
 from codex_account_manager.gui.view_base import (
     BaseView,
     SortableItem,
@@ -53,6 +59,7 @@ class ConversationsView(BaseView):
         self._project_names: dict[str, str] = {}
         self._busy = False
         self._tracking_busy = False
+        self._tracking_refresh_requested = False
         self._tracked: list[ObservedWork] = []
         self._support_busy = False
         self._continue_busy = False
@@ -358,7 +365,9 @@ class ConversationsView(BaseView):
 
     def refresh_tracking(self) -> None:
         if self._tracking_busy:
+            self._tracking_refresh_requested = True
             return
+        self._tracking_refresh_requested = False
         self._tracking_busy = True
         self.set_loading("tracking", True)
         self.runner.submit(self._tracking_snapshot(), self._render_tracking, self._tracking_failed)
@@ -445,6 +454,8 @@ class ConversationsView(BaseView):
         self._tracking_busy = False
         self.set_loading("tracking", False)
         self.tracking_status.setText(tr("Tracked work could not be loaded. Refresh to try again."))
+        if self._tracking_refresh_requested:
+            self.refresh_tracking()
 
     def _render_tracking(self, snapshot: tuple[list[ObservedWork], dict[str, str]]) -> None:
         self.set_loading("tracking", False)
@@ -494,7 +505,7 @@ class ConversationsView(BaseView):
                 self._account_names.get(work.account_hash, tr("Unknown account")),
                 turn_label,
                 goal,
-                datetime.fromtimestamp(work.observed_at).strftime("%d.%m %H:%M"),
+                format_timestamp(datetime.fromtimestamp(work.observed_at), year=False),
             )
             for column, value in enumerate(values):
                 item = (
@@ -564,6 +575,9 @@ class ConversationsView(BaseView):
                     self.tracked_table.selectRow(row)
                     break
         self._tracked_selected()
+
+        if self._tracking_refresh_requested:
+            self.refresh_tracking()
 
     def _tracked_selected(self) -> None:
         selected = bool(self.tracked_table.selectedItems())
@@ -676,7 +690,7 @@ class ConversationsView(BaseView):
         from codex_account_manager.gui.i18n import continuation_detail
 
         text = "\n\n".join(
-            datetime.fromisoformat(event["at"]).astimezone().strftime("%d.%m %H:%M:%S")
+            format_timestamp(datetime.fromisoformat(event["at"]), year=False, seconds=True)
             + "\n"
             + continuation_detail(event["payload"])
             for event in events
@@ -812,7 +826,7 @@ class ConversationsView(BaseView):
                     title,
                     self._project_title(thread),
                     source_label(thread.source),
-                    thread.updated_at.astimezone().strftime("%d.%m.%Y %H:%M"),
+                    format_timestamp(thread.updated_at),
                     thread.cwd or "—",
                 )
                 for column, value in enumerate(values):

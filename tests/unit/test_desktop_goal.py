@@ -69,15 +69,18 @@ async def test_manual_goal_capture_requires_live_active_desktop(migrated_db, goa
         owner.native.thread_status.side_effect = ConnectionNotReadyError("unavailable")
     elif change == "absent":
         server.native = GoalInfo("thread", None, None, False)
+        owner.native.manual_switch_turn = AsyncMock(
+            return_value={"id": "source", "status": "completed"}
+        )
     elif change == "ide":
         server.is_desktop_thread = AsyncMock(return_value=False)
     try:
-        ticket = await owner.prepare("thread", running_goal_only=True)
+        ticket = await owner.prepare("thread", capture_running=True)
     except ConnectionNotReadyError:
         assert change == "unknown"
     else:
         if change in {None, "interrupted_metadata"}:
-            assert ticket is not None and ticket.resume_active_goal
+            assert ticket is not None and ticket.resume_running_turn
             assert ticket.turn_id == "source"
         else:
             assert ticket is None
@@ -92,7 +95,7 @@ async def test_recovered_manual_goal_uses_opening_without_message(
     migrated_db, goal_setup, previous_attempt
 ):
     owner, server, ticket, opened, _clock = goal_setup
-    ticket = replace(ticket, resume_active_goal=True)
+    ticket = replace(ticket, resume_running_turn=True)
     server.latest = {"id": ticket.turn_id, "status": "interrupted"}
     server.verified_stored_turn = AsyncMock(return_value=server.latest)
     owner.native.latest_turn = AsyncMock(side_effect=AssertionError("No native history loading"))
@@ -121,7 +124,7 @@ async def test_recovered_manual_goal_uses_opening_without_message(
 
 async def test_manual_goal_does_not_reopen_after_possible_user_stop(migrated_db, goal_setup):
     owner, server, ticket, opened, clock = goal_setup
-    ticket = replace(ticket, resume_active_goal=True)
+    ticket = replace(ticket, resume_running_turn=True)
     server.latest = {"id": ticket.turn_id, "status": "interrupted"}
     await owner._claim(ticket)
     await owner.goal_observer.opened(ticket)

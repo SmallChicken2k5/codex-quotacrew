@@ -74,6 +74,8 @@ def test_release_versions_are_compared_numerically(remote, current, newer):
         "prerelease",
         "tag",
         "source",
+        "invalid-source-type",
+        "upstream-source",
         "url",
         "digest",
         "missing",
@@ -91,6 +93,14 @@ def test_untrusted_or_incomplete_releases_cannot_supply_an_installer(fault):
         data["tag_name"] = "../../2.0.0"
     elif fault == "source":
         data["html_url"] = "https://other.example/release"
+    elif fault == "invalid-source-type":
+        data["html_url"] = []
+    elif fault == "upstream-source":
+        root = "https://github.com/erkanpulat/quotacrew-codex-auto-resume/releases"
+        data["html_url"] = f"{root}/tag/v2.0.0"
+        data["assets"][0]["browser_download_url"] = (
+            f"{root}/download/v2.0.0/QuotaCrew-Setup-2.0.0.exe"
+        )
     elif fault == "url":
         data["assets"][0]["browser_download_url"] = "https://other.example/setup.exe"
     elif fault == "digest":

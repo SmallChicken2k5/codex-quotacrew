@@ -648,7 +648,7 @@ async def test_pending_goal_activation_blocks_conditional_shutdown(
         "acc-1",
         "signature",
         desktop=True,
-        resume_active_goal=manual_goal,
+        resume_running_turn=manual_goal,
         owner_key=account_identity("acc-1").fingerprint,
     )
     owner = ContinuationSupervisor()

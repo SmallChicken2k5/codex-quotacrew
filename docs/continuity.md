@@ -12,7 +12,7 @@ Before restarting Desktop, QuotaCrew validates the destination session. An inval
 
 A confirmed manual switch stops QuotaCrew's continuation queue and interrupts any turn owned by that queue before changing credentials. It waits for connection cleanup and the account lock; clearing tracking is not required. Conversations and goal checkpoints are preserved.
 
-Immediately before that restart, eligible Desktop goals are captured only after verifying their current goal, budget and live activity. After the switch, QuotaCrew opens each unchanged interrupted goal once without a message, or observes it if Desktop already resumed it. This also supports resuming the same turn identity. Full conversation history is not required. Ordinary running conversations are not sent a replacement prompt merely because of a manual switch. Desktop observations are invalidated after the restart, so an old running badge does not prove resumption.
+Immediately before a manual restart, QuotaCrew checks which Desktop turns are running. For a conversation without a goal, it sends one continuation message if Desktop confirms that the same turn was interrupted after the switch. A completed or previously stopped turn and a conversation waiting for approval are skipped. If Desktop has already resumed the turn, QuotaCrew observes it. For an active goal, QuotaCrew checks the goal and budget and opens the unchanged interrupted goal once. Desktop observations are refreshed after the restart.
 
 A successful account switch does not by itself prove that a conversation resumed or that an IDE reloaded its cached account.
 

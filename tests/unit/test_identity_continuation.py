@@ -41,13 +41,12 @@ async def test_user_changed_between_goal_turns_cannot_receive_next_message(migra
 
 
 async def test_desktop_checks_owner_again_after_waiting_for_connection(migrated_db):
-    supervisor, server, source, ticket = setup_native()
+    supervisor, server, _, ticket = setup_native()
 
     async def turn(*_args, **_kwargs):
         server.identity = account_identity("acc-1", "other-user")
-        return source
 
-    supervisor.native.latest_turn = AsyncMock(side_effect=turn)
+    supervisor.native.check_message_target = AsyncMock(side_effect=turn)
     await supervisor.run(ticket)
     supervisor.native.send.assert_not_awaited()
     async with connect() as db:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 (2026-11-24)
+
+- Improved Desktop chat continuation after manual and quota-triggered account switches, including retry notices and running-job counts.
+- Fixed smart account selection when quota windows arrive out of order or reset times are slightly ahead of the local clock.
+
+## 0.5.0 (2026-11-21)
+
+- Added Spanish, Japanese and German to the Windows interface and Store package.
+- Updated GitHub links and release verification for the renamed repository. If an older GitHub build cannot verify the new release address, install the latest Windows installer from GitHub over your existing installation to restore in-app updates.
+
 ## 0.4.3 (2026-11-15)
 
 - Add Brazilian Portuguese (pt-BR) with automatic language selection on Portuguese systems and a manual language option in Settings.
