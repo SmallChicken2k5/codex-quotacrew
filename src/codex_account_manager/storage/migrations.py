@@ -299,6 +299,18 @@ async def _profile_auto_switch(db: aiosqlite.Connection) -> None:
     )
 
 
+async def _antigravity_profiles(db: aiosqlite.Connection) -> None:
+    await db.execute("""CREATE TABLE IF NOT EXISTS antigravity_profiles (
+        email TEXT PRIMARY KEY,
+        alias TEXT NOT NULL,
+        preferred INTEGER NOT NULL DEFAULT 0 CHECK (preferred IN (0, 1)),
+        observed_at INTEGER,
+        quota TEXT
+    )""")
+    await db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS antigravity_one_preferred
+        ON antigravity_profiles (preferred) WHERE preferred = 1""")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "initial application schema", _initial_schema),
     Migration(2, "durable automatic continuation attempts", _create_continuation_attempts),
@@ -311,6 +323,9 @@ MIGRATIONS: list[Migration] = [
     Migration(9, "preserve manually handed off active goals", _manual_goal_intent),
     Migration(10, "distinguish users within a workspace", _profile_user_identity),
     Migration(11, "configure automatic switching per profile", _profile_auto_switch),
+    Migration(
+        12, "save local Antigravity account profiles and observed quotas", _antigravity_profiles
+    ),
 ]
 
 TARGET_VERSION = MIGRATIONS[-1].version

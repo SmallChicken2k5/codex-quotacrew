@@ -2,12 +2,47 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+def verify_antigravity_callback(cli: Path, database: Path) -> None:
+    email = "installer-test@example.test"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "INSERT INTO antigravity_profiles(email, alias) VALUES (?, 'Upgrade test')", (email,)
+        )
+    db.close()
+    data = {
+        "product": "antigravity",
+        "email": email,
+        "quota": {"gemini-weekly": {"remaining_fraction": 0.5}},
+    }
+    shell = Path(os.environ["SystemRoot"]) / "System32/cmd.exe"
+    result = subprocess.run(
+        f'"{shell}" /d /c ""{cli}" antigravity-status"',
+        executable=str(shell),
+        input=json.dumps(data),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    with sqlite3.connect(database) as db:
+        saved = db.execute(
+            "SELECT quota FROM antigravity_profiles WHERE email = ?", (email,)
+        ).fetchone()
+    db.close()
+    if result.stdout.strip() != "QuotaCrew: quota synced" or not saved or not saved[0]:
+        raise RuntimeError("Installed Antigravity status-line callback did not save quota.")
+    if json.loads(saved[0])["gemini-weekly"]["remaining_fraction"] != 0.5:
+        raise RuntimeError("Installed Antigravity callback saved an unexpected quota value.")
+    print("Installed CLI accepted an Antigravity quota snapshot through Windows cmd.exe.")
 
 
 def main() -> None:
@@ -60,7 +95,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(
         prefix="account-manager-install-", dir=os.environ["RUNNER_TEMP"]
     ) as temporary:
-        destination = Path(temporary) / "application"
+        destination = Path(temporary) / "QuotaCrew Test"
         flags = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"]
         try:
             previous = os.environ.get("QUOTACREW_PREVIOUS_INSTALLER")
@@ -132,9 +167,11 @@ def main() -> None:
                     raise RuntimeError(f"Shortcut points to the wrong executable: {link.name}")
             if startup_command() != f'"{executable}"':
                 raise RuntimeError("Start-with-Windows entry is missing or incorrectly quoted.")
-            subprocess.run([str(destination / "cli/cx.exe"), "--help"], check=True, timeout=60)
+            installed_cli = destination / "cli/cx.exe"
+            subprocess.run([str(installed_cli), "--help"], check=True, timeout=60)
+            subprocess.run([str(installed_cli), "init"], check=True, timeout=60)
+            verify_antigravity_callback(installed_cli, database)
             if saved_rows:
-                subprocess.run([str(destination / "cli/cx.exe"), "init"], check=True, timeout=60)
                 with sqlite3.connect(database) as db:
                     if db.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                         raise RuntimeError("Upgraded account database is invalid.")

@@ -33,6 +33,7 @@ from codex_account_manager.domain.states import HandoffReason
 from codex_account_manager.gui.about import AboutView
 from codex_account_manager.gui.accounts import AccountsView
 from codex_account_manager.gui.activity import ActivityView
+from codex_account_manager.gui.antigravity import AntigravityView
 from codex_account_manager.gui.async_runner import AsyncRunner
 from codex_account_manager.gui.conversations import ConversationsView
 from codex_account_manager.gui.design import (
@@ -65,6 +66,7 @@ _NAV = [
     ("Settings", "settings"),
     ("Help", "help"),
     ("Shutdown", "power"),
+    ("Antigravity", "quota"),
 ]
 
 
@@ -289,6 +291,7 @@ class MainWindow(QMainWindow):
         self.conversations.work_changed.connect(self._work_changed)
         self.conversations.tracking_reset.connect(self._tracking_reset)
         self.accounts_view = AccountsView(self.runner, self.accounts)
+        self.antigravity = AntigravityView(self.runner)
         self.accounts_view.auto_switch_changed.connect(self.dashboard.set_auto_switch_enabled)
         self.accounts_view.preferred_profile_changed.connect(self.dashboard.set_preferred_profile)
         self.accounts_view.load_preferred_profile()
@@ -351,6 +354,7 @@ class MainWindow(QMainWindow):
             self.settings,
             self.about,
             self.power_view,
+            self.antigravity,
         ]
 
     def _toggle_monitoring(self) -> None:
@@ -582,6 +586,7 @@ class MainWindow(QMainWindow):
         with QSignalBlocker(self.nav):
             self.nav.setCurrentRow(6)
             self.stack.setCurrentIndex(index)
+            self.topbar.show()
             self.back_to_settings.show()
         self._views[index].refresh()
 
@@ -643,6 +648,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(row)
         self._style_navigation(row)
         view = self._views[row]
+        self.topbar.setVisible(view is not self.antigravity)
         if hasattr(view, "refresh"):
             view.refresh()
 

@@ -71,6 +71,10 @@ The plan badge can also show the subscription-period date recorded at sign-in wh
 
 To change the interface language, go to **Settings → General → Language** and restart QuotaCrew.
 
+### Antigravity accounts
+
+Open **Antigravity → Add account** and enter each Google account email. Select a row to see its last quota snapshot by model group, mark it preferred, or choose **Switch manually** and complete Google sign-in in Antigravity. To receive quota, use **Connect CLI**, paste the command at the `agy` prompt and run `/usage`. The callback only updates a saved email. The table marks older snapshots as stale, and **Refresh** reloads local data. If you already use a custom Antigravity status line, save its command before replacing it.
+
 Version 0.4.0 upgrades the account database. Keep this version installed after upgrading; older versions cannot open the upgraded database. If an existing profile needs ownership verification, use **Verify account again** from its actions menu.
 
 <details>

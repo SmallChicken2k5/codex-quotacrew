@@ -132,6 +132,7 @@ jobs:
         run: |
           Copy-Item packaging/WINDOWS-README.md -Destination dist/QuotaCrew/README.md
           Copy-Item LICENSE,THIRD_PARTY_NOTICES.md -Destination dist/QuotaCrew
+          Copy-Item -LiteralPath dist/cx -Destination dist/QuotaCrew/cli -Recurse
           $folder = 'installer/Output'
           $portable = "QuotaCrew-portable-$env:BUILD_VERSION.zip"
           Compress-Archive -Path dist/QuotaCrew/* -DestinationPath "$folder/$portable"

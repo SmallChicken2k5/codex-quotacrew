@@ -78,7 +78,7 @@ gui_coll = COLLECT(
     gui_exe, gui_a.binaries, gui_a.datas, name="QuotaCrew",
 )
 
-cli_a = Analysis(["../src/codex_account_manager/cli/main.py"], **_common)
+cli_a = Analysis(["../src/codex_account_manager/cli/entrypoint.py"], **_common)
 cli_a.binaries = [item for item in cli_a.binaries if Path(item[0]).name != "opengl32sw.dll"]
 cli_pyz = PYZ(cli_a.pure)
 cli_exe = EXE(

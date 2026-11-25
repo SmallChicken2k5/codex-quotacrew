@@ -62,7 +62,7 @@ dev = [
 
 [project.scripts]
 codex-accounts = "codex_account_manager.cli.main:app"
-cx = "codex_account_manager.cli.main:app"
+cx = "codex_account_manager.cli.entrypoint:main"
 
 [project.gui-scripts]
 quotacrew = "codex_account_manager.gui.tray_main:main"

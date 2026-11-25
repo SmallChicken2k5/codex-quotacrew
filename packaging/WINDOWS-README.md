@@ -20,6 +20,11 @@ quota-interrupted conversations from one Windows application.
    that Codex can verify. Enable monitoring and choose your switching and
    continuation preferences when ready.
 
+For Antigravity, add your Google accounts under **Antigravity**. Select an
+account and choose **Switch manually** to open Antigravity and sign in there.
+To see quota for the signed-in account, choose **Connect CLI**, paste the setup
+command in `agy`, then run `/usage`. The table keeps the last snapshot per account.
+
 Existing Codex conversations are preserved. QuotaCrew stores its profiles and
 settings locally; System check shows their locations. Upgrades and removal preserve
 that data. On Windows, saved profile credentials and switch recovery snapshots
