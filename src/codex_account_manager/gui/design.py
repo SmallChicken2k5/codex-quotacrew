@@ -7,6 +7,7 @@ stays crisp at any DPI.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, QSize, Qt
@@ -145,8 +146,6 @@ def make_icon(name: str, color: str, size: int = 20) -> QIcon:
         p.drawLine(QLineF(s * 0.58, s * 0.58, s - m, s - m))
     elif name == "settings":
         p.drawEllipse(QRectF(s * 0.35, s * 0.35, s * 0.3, s * 0.3))
-        import math
-
         cx = cy = s / 2.0
         for angle in range(0, 360, 45):
             rad = math.radians(angle)
@@ -203,6 +202,21 @@ def make_icon(name: str, color: str, size: int = 20) -> QIcon:
     elif name == "more":
         for y in (s * 0.27, s * 0.5, s * 0.73):
             p.drawPoint(QPointF(s * 0.5, y))
+    elif name in {"star", "star-filled"}:
+        points = []
+        for index in range(10):
+            radians = math.radians(36 * index - 90)
+            radius = s * (0.21 if index % 2 else 0.42)
+            points.append(
+                QPointF(s / 2 + radius * math.cos(radians), s / 2 + radius * math.sin(radians))
+            )
+        path = QPainterPath(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
+        path.closeSubpath()
+        if name == "star-filled":
+            p.fillPath(path, QColor(color))
+        p.drawPath(path)
     elif name == "chat":
         p.drawRoundedRect(QRectF(m, m, s - 2 * m, s * 0.56), s * 0.18, s * 0.18)
         p.drawLine(QLineF(s * 0.34, s * 0.71, s * 0.28, s - m))

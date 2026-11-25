@@ -107,6 +107,7 @@ def display_health(profile: Profile | ProfileHealth) -> ProfileHealth:
 class AccountTable(QWidget):
     sort_requested = Signal(tuple)
     auto_switch_requested = Signal(str, bool)
+    preference_requested = Signal(str)
 
     HEADINGS = (
         ("Account", ("name", "name_desc")),
@@ -115,12 +116,15 @@ class AccountTable(QWidget):
         ("Status", ("status", "status_desc")),
     )
 
-    def __init__(self, palette: Palette = DARK):
+    def __init__(self, palette: Palette = DARK, *, show_preference: bool = False):
         super().__init__()
         self.setObjectName("AccountTable")
         self.palette_ = palette
         self.rows: dict[str, AccountRow] = {}
         self.pending_auto_switch: dict[str, bool] = {}
+        self._show_preference = show_preference
+        self._preferred_profile_id: str | None = None
+        self._preference_enabled = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
@@ -220,9 +224,15 @@ class AccountTable(QWidget):
         self.clear()
         self.header.setVisible(bool(profiles))
         for index, profile in enumerate(profiles):
-            row = AccountRow(profile, self.palette_)
+            row = AccountRow(profile, self.palette_, show_preference=self._show_preference)
             row.set_auto_switch_pending(self.pending_auto_switch.get(profile.profile_id))
             row.auto_switch_requested.connect(self.auto_switch_requested.emit)
+            if self._show_preference:
+                row.set_preference(
+                    profile.profile_id == self._preferred_profile_id,
+                    enabled=self._preference_enabled,
+                )
+                row.preference_requested.connect(self.preference_requested.emit)
             if on_switch is not None:
                 row.switch_requested.connect(on_switch)
             if on_sign_in is not None:
@@ -241,6 +251,12 @@ class AccountTable(QWidget):
         self._grid.setColumnStretch(0, 1)
         self._grid.setColumnStretch(1, 1)
         self._update_columns()
+
+    def set_preference(self, profile_id: str | None, *, enabled: bool) -> None:
+        self._preferred_profile_id = profile_id
+        self._preference_enabled = enabled
+        for row in self.rows.values():
+            row.set_preference(row.profile_id == profile_id, enabled=enabled)
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.scroll_area.viewport() and event.type() == QEvent.Type.Resize:

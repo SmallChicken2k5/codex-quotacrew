@@ -101,6 +101,8 @@ TR = {
     "A profile with this name already exists.": "Bu adda bir profil zaten var.",
     "Codex rejected this sign-in. Choose a current auth.json or sign in with a browser.": "Codex bu girişi reddetti. Güncel bir auth.json seçin veya tarayıcıyla giriş yapın.",
     "Include in automatic switching": "Otomatik geçişe dahil et",
+    "Prefer this account": "Bu hesaba öncelik ver",
+    "Clear preferred account": "Hesap önceliğini kaldır",
     "Include {account} in automatic switching": "{account} hesabını otomatik geçişe dahil et",
     "Auto-switch": "Oto. geçiş",
     "{count} in auto-switch": "{count} hesap otomatik geçişte",

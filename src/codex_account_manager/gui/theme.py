@@ -149,9 +149,11 @@ QLabel#AccountAvatar[variant="2"] {{ background: #dcf4e9; color: #04925a; }}
 QToolButton#RowMenu {{ border: none; background: transparent; font-size: 23px; color: {p.muted}; padding: 0; }}
 QToolButton#RowMenu:hover {{ color: {p.primary}; }}
 QToolButton#RowMenu::menu-indicator {{ image: none; width: 0px; }}
+QToolButton#RowPriority {{ border: none; background: transparent; padding: 0; }}
+QToolButton#RowPriority:hover {{ background: {p.surface_alt}; border-radius: 6px; }}
 QToolButton#RowMore {{ background: transparent; border: none; border-radius: 8px; padding: 6px; }}
 QToolButton#RowMore:hover {{ background: {p.surface_alt}; }}
-QToolButton#RowMenu:focus, QToolButton#RowMore:focus {{ border: 1px solid {p.primary}; border-radius: 6px; }}
+QToolButton#RowMenu:focus, QToolButton#RowMore:focus, QToolButton#RowPriority:focus {{ border: 1px solid {p.primary}; border-radius: 6px; }}
 QToolButton#RowMore::menu-indicator {{ image: none; width: 0px; }}
 QPushButton#TableHeading {{ text-align: left; background: transparent; border: none; color: {p.text}; padding: 8px 0; font-size: 13px; font-weight: 600; }}
 QPushButton#TableHeading:hover {{ color: {p.primary}; }}

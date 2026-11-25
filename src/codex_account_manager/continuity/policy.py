@@ -50,6 +50,9 @@ class SwitchPolicy:
 
     kind = SwitchPolicyKind.MANUAL
 
+    def __init__(self, *, preferred_profile_id: str | None = None):
+        self._preferred_profile_id = preferred_profile_id
+
     def decide(
         self, current: ProfileHealth | None, candidates: list[ProfileHealth]
     ) -> SwitchDecision:
@@ -91,8 +94,14 @@ class SwitchPolicy:
         available = self._available_candidates(current, candidates)
         if not available:
             return None
+        preferred = self._preferred_candidate(available)
+        if preferred is not None:
+            return preferred
         # Prefer the profile with the most headroom (lowest peak usage).
         return min(available, key=lambda h: (_peak_usage(h), h.alias.casefold(), h.profile_id))
+
+    def _preferred_candidate(self, available: list[ProfileHealth]) -> ProfileHealth | None:
+        return next((h for h in available if h.profile_id == self._preferred_profile_id), None)
 
     def _available_candidates(
         self, current: ProfileHealth | None, candidates: list[ProfileHealth]
@@ -202,7 +211,13 @@ class SmartQuotaPolicy(SwitchPolicy):
 
     kind = SwitchPolicyKind.SMART_QUOTA
 
-    def __init__(self, clock: Callable[[], datetime] | None = None):
+    def __init__(
+        self,
+        clock: Callable[[], datetime] | None = None,
+        *,
+        preferred_profile_id: str | None = None,
+    ):
+        super().__init__(preferred_profile_id=preferred_profile_id)
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def decide(
@@ -225,6 +240,9 @@ class SmartQuotaPolicy(SwitchPolicy):
             return SwitchDecision(
                 False, False, None, "No authorized, available profile to fail over to."
             )
+        preferred = self._preferred_candidate(available)
+        if preferred is not None:
+            return SwitchDecision(True, False, preferred, "The preferred account has usable quota.")
         enough = [h for h in available if 100 - _peak_usage(h) >= SMART_MIN_HEADROOM]
         pool = enough or available
         now = self._clock()
@@ -283,7 +301,9 @@ _POLICIES: dict[SwitchPolicyKind, type[SwitchPolicy]] = {
 }
 
 
-def resolve_policy(kind: SwitchPolicyKind | str) -> SwitchPolicy:
+def resolve_policy(
+    kind: SwitchPolicyKind | str, *, preferred_profile_id: str | None = None
+) -> SwitchPolicy:
     if isinstance(kind, str):
         kind = SwitchPolicyKind(kind)
-    return _POLICIES[kind]()
+    return _POLICIES[kind](preferred_profile_id=preferred_profile_id)

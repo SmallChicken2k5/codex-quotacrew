@@ -173,6 +173,27 @@ def test_smart_selection_scenarios(a, b, expected):
     assert smart_decision(smart_health("a", *a), smart_health("b", *b)).target.alias == expected
 
 
+@pytest.mark.parametrize(
+    ("kind", "confirmation"),
+    [("confirm", True), ("availability_failover", False), ("smart_quota", False)],
+)
+def test_preference_only_applies_to_eligible_automatic_candidates(kind, confirmation):
+    current = _health("current", active=True, allowed=False, quota=QuotaState.LIMITED_NO_RESET)
+    preferred = smart_health("preferred", 5, 5, 72)
+    fallback = smart_health("fallback", 90, 90, 72)
+    policy = resolve_policy(kind, preferred_profile_id=preferred.profile_id)
+    decision = policy.decide(current, [fallback, preferred])
+    assert decision.target == preferred
+    assert decision.requires_confirmation is confirmation
+    for unavailable in (
+        replace(preferred, auto_switch_enabled=False),
+        replace(preferred, reauth_required=True),
+        replace(preferred, quota_state=QuotaState.LIMITED_WITH_RESET),
+        replace(preferred, primary_used_percent=None),
+    ):
+        assert policy.decide(current, [unavailable, fallback]).target == fallback
+
+
 def test_smart_candidate_is_stable_across_small_reset_clock_differences():
     expiring = smart_health("expiring", 90, 20, 0.3)
     full = smart_health("full", 100, 51, 70, primary_hours=5)

@@ -40,11 +40,13 @@ from codex_account_manager.gui.view_base import (
     view_header,
 )
 from codex_account_manager.gui.widgets import label
+from codex_account_manager.storage.repositories import PREFERRED_PROFILE_KEY, SettingsRepository
 
 
 class AccountsView(BaseView):
     auto_switch_changed = Signal(str, bool)
     auto_switch_pending = Signal(str, object)
+    preferred_profile_changed = Signal(object)
 
     def __init__(self, runner: AsyncRunner, accounts: AccountService, palette=DARK):
         super().__init__(palette)
@@ -57,6 +59,9 @@ class AccountsView(BaseView):
         self._profiles: list[Profile | ProfileHealth] = []
         self._sort_mode = "name"
         self._reveal_profile_id: str | None = None
+        self._preferred_profile_id: str | None = None
+        self._preference_loaded = False
+        self._preference_busy = False
 
         add = QPushButton(tr(" Add profile"))
         add.setObjectName("Primary")
@@ -93,8 +98,9 @@ class AccountsView(BaseView):
         self.controls.changed.connect(self._sort_changed)
         panel_layout.addWidget(self.controls)
         self.controls.hide()
-        self.table = AccountTable(palette)
+        self.table = AccountTable(palette, show_preference=True)
         self.table.auto_switch_requested.connect(self.set_auto_switch_enabled)
+        self.table.preference_requested.connect(self._toggle_preference)
         self.table.sort_requested.connect(self._sort_column)
         self.table.set_sort(self._sort_mode)
         panel_layout.addWidget(self.table, 1)
@@ -103,6 +109,7 @@ class AccountsView(BaseView):
         panel_layout.addWidget(self.operation_status)
 
     def refresh(self) -> None:
+        self.load_preferred_profile()
         if self._busy:
             return
         self._busy = True
@@ -111,6 +118,40 @@ class AccountsView(BaseView):
             self.operation_status.setText(tr("Loading saved accounts…"))
             self.operation_status.show()
         self.runner.submit(self.accounts.all_health(), self._render, self._load_failed)
+
+    def load_preferred_profile(self) -> None:
+        if self._preference_loaded or self._preference_busy:
+            return
+        self._preference_busy = True
+        self.runner.submit(
+            SettingsRepository().get(PREFERRED_PROFILE_KEY),
+            self._apply_preferred_profile,
+            self._preference_failed,
+        )
+
+    def _apply_preferred_profile(self, profile_id: str | None) -> None:
+        self._preference_loaded = True
+        self._preference_busy = False
+        self._preferred_profile_id = profile_id or None
+        self.table.set_preference(self._preferred_profile_id, enabled=True)
+        self.preferred_profile_changed.emit(self._preferred_profile_id)
+
+    def _preference_failed(self, error: Exception) -> None:
+        self._preference_busy = False
+        self.table.set_preference(self._preferred_profile_id, enabled=self._preference_loaded)
+        QMessageBox.warning(self, tr("Operation failed"), error_message(str(error)))
+
+    def _toggle_preference(self, profile_id: str) -> None:
+        if not self._preference_loaded or self._preference_busy:
+            return
+        preferred = None if profile_id == self._preferred_profile_id else profile_id
+        self._preference_busy = True
+        self.table.set_preference(self._preferred_profile_id, enabled=False)
+        self.runner.submit(
+            SettingsRepository().set(PREFERRED_PROFILE_KEY, preferred or ""),
+            lambda _: self._apply_preferred_profile(preferred),
+            self._preference_failed,
+        )
 
     def _load_failed(self, error: Exception) -> None:
         self._busy = False

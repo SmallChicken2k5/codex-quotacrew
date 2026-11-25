@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPen
+from PySide6.QtGui import QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -236,8 +236,11 @@ class AccountRow(QFrame):
     refresh_requested = Signal()
     manage_requested = Signal()
     auto_switch_requested = Signal(str, bool)
+    preference_requested = Signal(str)
 
-    def __init__(self, health: ProfileHealth, palette: Palette = DARK):
+    def __init__(
+        self, health: ProfileHealth, palette: Palette = DARK, *, show_preference: bool = False
+    ):
         super().__init__()
         self.setObjectName("AccountRow")
         self.setProperty("active", "true" if health.is_active else "false")
@@ -410,6 +413,26 @@ class AccountRow(QFrame):
             lambda enabled: self.auto_switch_requested.emit(self.profile_id, enabled)
         )
         actions.addWidget(self.auto_switch)
+        row_buttons = QVBoxLayout()
+        row_buttons.setSpacing(0)
+        self.priority_button = QToolButton()
+        self.priority_button.setObjectName("RowPriority")
+        self.priority_button.setFixedSize(30, 28)
+        self.priority_button.setCheckable(True)
+        star = make_icon("star", palette.muted, 20)
+        star.addPixmap(
+            make_icon("star-filled", palette.warning, 20).pixmap(20, 20),
+            QIcon.Mode.Normal,
+            QIcon.State.On,
+        )
+        self.priority_button.setIcon(star)
+        self.priority_button.setIconSize(QSize(20, 20))
+        self.priority_button.clicked.connect(
+            lambda: self.preference_requested.emit(self.profile_id)
+        )
+        self.priority_button.setVisible(show_preference)
+        self.set_preference(False, enabled=False)
+        row_buttons.addWidget(self.priority_button, 0, Qt.AlignmentFlag.AlignHCenter)
         self._switch_btn = QToolButton()
         self._switch_btn.setObjectName("RowMenu")
         self._switch_btn.setIcon(make_icon("more", palette.muted, 24))
@@ -431,7 +454,8 @@ class AccountRow(QFrame):
         menu.addAction(tr("Refresh usage"), self.refresh_requested.emit)
         menu.addAction(tr("Manage profiles"), self.manage_requested.emit)
         self._switch_btn.setMenu(menu)
-        actions.addWidget(self._switch_btn)
+        row_buttons.addWidget(self._switch_btn)
+        actions.addLayout(row_buttons)
         actions.addStretch()
         root.addWidget(self._action_host, 0, 4, Qt.AlignmentFlag.AlignVCenter)
 
@@ -454,6 +478,13 @@ class AccountRow(QFrame):
     def set_auto_switch_pending(self, requested: bool | None) -> None:
         self.auto_switch.setChecked(self._auto_switch_enabled if requested is None else requested)
         self.auto_switch.setEnabled(requested is None)
+
+    def set_preference(self, preferred: bool, *, enabled: bool) -> None:
+        self.priority_button.setChecked(preferred)
+        description = tr("Clear preferred account") if preferred else tr("Prefer this account")
+        self.priority_button.setToolTip(description)
+        self.priority_button.setAccessibleName(f"{description} ({self.alias})")
+        self.priority_button.setEnabled(enabled)
 
     def set_column_widths(self, widths: tuple[int, int, int, int, int]) -> None:
         identity, five_hour, weekly, status, actions = widths

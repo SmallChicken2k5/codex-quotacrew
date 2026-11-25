@@ -17,6 +17,8 @@ JA = {
     "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.": "選択した目標が {minutes} 分間ブロックされ、Codex がアイドル状態の場合、シャットダウンまでの 2 分間のカウントダウンが始まります。",
     "Import auth.json": "auth.json をインポート",
     "Include in automatic switching": "自動切り替えの対象にする",
+    "Prefer this account": "このアカウントを優先する",
+    "Clear preferred account": "アカウントの優先設定を解除する",
     "Include {account} in automatic switching": "{account} を自動切り替えの対象にする",
     "JSON files (*.json)": "JSON ファイル (*.json)",
     "Local time in HH:MM format. Separate multiple times with commas.": "現地時刻を HH:MM 形式で指定します。複数の時刻はカンマで区切ってください。",

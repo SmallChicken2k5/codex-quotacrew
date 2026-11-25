@@ -59,6 +59,47 @@ class _StubAccounts:
         return self._health
 
 
+async def test_saved_preferred_account_resumes_priority_at_the_next_limit(migrated_db):
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    from codex_account_manager.storage.repositories import PREFERRED_PROFILE_KEY, SettingsRepository
+
+    settings = SettingsRepository()
+    await settings.set_many({"switch_policy": "smart_quota", PREFERRED_PROFILE_KEY: "preferred"})
+    source = _health("source", active=True, allowed=False, quota=QuotaState.LIMITED_NO_RESET)
+    fallback = _health("fallback")
+    preferred = _health("preferred", secondary=98)
+    health = [source, fallback, preferred]
+    fresh_preferred = replace(preferred, quota_state=QuotaState.LIMITED_NO_RESET)
+
+    class Accounts(_StubAccounts):
+        async def health(self, alias):
+            if alias == "preferred":
+                return fresh_preferred
+            return next(profile for profile in health if profile.alias == alias)
+
+    continuity = _FakeContinuity()
+    continuity.continue_on_limit = AsyncMock()
+    watcher = Watcher(accounts=Accounts(health), continuity=continuity)
+
+    await watcher.poll_once()
+    assert [call.args for call in continuity.continue_on_limit.await_args_list] == [("fallback",)]
+
+    fresh_preferred = preferred
+    health[:] = [replace(source, is_active=False), replace(fallback, is_active=True), preferred]
+    await watcher.poll_once()
+    assert continuity.continue_on_limit.await_count == 1
+
+    health[1] = replace(health[1], quota_state=QuotaState.LIMITED_NO_RESET)
+    await watcher.poll_once()
+    assert [call.args for call in continuity.continue_on_limit.await_args_list] == [
+        ("fallback",),
+        ("preferred",),
+    ]
+    assert await settings.get(PREFERRED_PROFILE_KEY) == "preferred"
+
+
 async def test_failed_candidate_recheck_does_not_block_another_available_account():
     from dataclasses import replace
 

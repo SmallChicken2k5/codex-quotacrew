@@ -290,6 +290,8 @@ class MainWindow(QMainWindow):
         self.conversations.tracking_reset.connect(self._tracking_reset)
         self.accounts_view = AccountsView(self.runner, self.accounts)
         self.accounts_view.auto_switch_changed.connect(self.dashboard.set_auto_switch_enabled)
+        self.accounts_view.preferred_profile_changed.connect(self.dashboard.set_preferred_profile)
+        self.accounts_view.load_preferred_profile()
         self.accounts_view.auto_switch_pending.connect(
             self.dashboard.account_table.set_auto_switch_pending
         )

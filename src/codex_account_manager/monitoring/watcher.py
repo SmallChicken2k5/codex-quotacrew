@@ -68,14 +68,20 @@ class Watcher:
     ) -> list[ProfileHealth]:
         """One structured poll. Returns health for all profiles."""
         if self._load_policy:
-            from codex_account_manager.storage.repositories import SettingsRepository
+            from codex_account_manager.storage.repositories import (
+                PREFERRED_PROFILE_KEY,
+                SettingsRepository,
+            )
 
             values = await SettingsRepository().all()
             value = values.get("switch_policy", DEFAULT_POLICY)
             if self._load_interval:
                 self.poll_seconds = poll_interval(values.get("poll_seconds"))
             try:
-                self.policy = resolve_policy(value or DEFAULT_POLICY)
+                self.policy = resolve_policy(
+                    value or DEFAULT_POLICY,
+                    preferred_profile_id=values.get(PREFERRED_PROFILE_KEY) or None,
+                )
             except ValueError:
                 self.policy = resolve_policy(SwitchPolicyKind.MANUAL)
         health = await self.accounts.all_health()

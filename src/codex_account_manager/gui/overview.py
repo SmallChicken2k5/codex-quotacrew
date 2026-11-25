@@ -47,6 +47,7 @@ class DashboardView(BaseView):
         self.on_switch = on_switch
         self._account_rows: dict[str, AccountRow] = {}
         self._health: list[ProfileHealth] = []
+        self._preferred_profile_id: str | None = None
         self._busy = False
         self._work_busy = False
         self._loaded = False
@@ -151,6 +152,10 @@ class DashboardView(BaseView):
     def _sort_column(self, modes: tuple[str, str]) -> None:
         mode = modes[1] if self.sort_order.currentData() == modes[0] else modes[0]
         self.sort_order.setCurrentIndex(self.sort_order.findData(mode))
+
+    def set_preferred_profile(self, profile_id: str | None) -> None:
+        self._preferred_profile_id = profile_id
+        self._filter()
 
     def set_automation(self, mode: str, enabled: bool, seconds: int) -> None:
         self._switch_mode = mode
@@ -288,7 +293,10 @@ class DashboardView(BaseView):
         current = next((h for h in self._health if h.is_active), None)
         candidate = None
         if self._monitoring and self._switch_mode != "manual" and current is not None:
-            candidate = resolve_policy(self._switch_mode)._best_candidate(current, self._health)
+            policy = resolve_policy(
+                self._switch_mode, preferred_profile_id=self._preferred_profile_id
+            )
+            candidate = policy._best_candidate(current, self._health)
         self.account_table.set_profiles(
             ordered,
             email_visible=not self.email_toggle.isChecked(),

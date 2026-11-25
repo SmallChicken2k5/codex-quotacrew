@@ -21,6 +21,8 @@ from codex_account_manager.domain.models import (
 from codex_account_manager.domain.states import GoalState, HandoffReason
 from codex_account_manager.storage.database import connect
 
+PREFERRED_PROFILE_KEY = "preferred_profile_id"
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()

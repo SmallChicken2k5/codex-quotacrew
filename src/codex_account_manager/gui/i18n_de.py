@@ -17,6 +17,8 @@ DE = {
     "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.": "Bleibt das gewählte Ziel {minutes} Minuten lang blockiert und ist Codex inaktiv, beginnt ein zweiminütiger Countdown zum Herunterfahren.",
     "Import auth.json": "auth.json importieren",
     "Include in automatic switching": "Beim automatischen Wechsel berücksichtigen",
+    "Prefer this account": "Dieses Konto bevorzugen",
+    "Clear preferred account": "Kontopriorität aufheben",
     "Include {account} in automatic switching": "{account} beim automatischen Wechsel berücksichtigen",
     "JSON files (*.json)": "JSON-Dateien (*.json)",
     "Local time in HH:MM format. Separate multiple times with commas.": "Lokale Uhrzeit im Format HH:MM. Trenne mehrere Uhrzeiten durch Kommas.",

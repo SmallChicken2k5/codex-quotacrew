@@ -14,6 +14,8 @@ PT_BR: dict[str, str] = {
     "A profile with this name already exists.": "Já existe um perfil com esse nome.",
     "Codex rejected this sign-in. Choose a current auth.json or sign in with a browser.": "O Codex rejeitou este acesso. Escolha um auth.json atualizado ou entre pelo navegador.",
     "Include in automatic switching": "Incluir na troca automática",
+    "Prefer this account": "Dar prioridade a esta conta",
+    "Clear preferred account": "Remover a prioridade da conta",
     "Include {account} in automatic switching": "Incluir {account} na troca automática",
     "Auto-switch": "Troca auto.",
     "{count} in auto-switch": "{count} na troca automática",

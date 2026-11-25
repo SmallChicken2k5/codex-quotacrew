@@ -2040,6 +2040,61 @@ def test_header_sort_does_not_change_next_candidate(window):
     assert all(row._candidate.isHidden() for row in view._account_rows.values())
 
 
+async def test_preferred_account_button_saves_restores_and_updates_overview(
+    window, migrated_db, monkeypatch
+):
+    from PySide6.QtWidgets import QMessageBox
+
+    from codex_account_manager.gui.accounts import AccountsView
+    from codex_account_manager.storage.repositories import PREFERRED_PROFILE_KEY, SettingsRepository
+
+    pending = []
+    monkeypatch.setattr(window.runner, "submit", lambda *args: pending.append(args))
+
+    async def finish_save():
+        coro, callback, _ = pending.pop(0)
+        callback(await coro)
+
+    profiles = sample_profiles()
+    view = window.accounts_view
+    dashboard = window.dashboard
+    view._apply_preferred_profile(None)
+    view._render(profiles)
+    dashboard.set_automation("smart_quota", True, 60)
+
+    open_source = view.table.rows["Open source"].priority_button
+    studio = view.table.rows["Studio"].priority_button
+    assert not open_source.isHidden()
+    open_source.click()
+    await finish_save()
+    assert open_source.isChecked() and not studio.isChecked()
+    assert await SettingsRepository().get(PREFERRED_PROFILE_KEY) == "Open source"
+    assert not dashboard._account_rows["Open source"]._candidate.isHidden()
+
+    studio.click()
+    failed_save, _, on_error = pending.pop(0)
+    failed_save.close()
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_: None)
+    on_error(RuntimeError("Could not save"))
+    assert open_source.isChecked() and not studio.isChecked()
+    studio.click()
+    await finish_save()
+    assert studio.isChecked() and not open_source.isChecked()
+    assert not dashboard._account_rows["Studio"]._candidate.isHidden()
+
+    reopened = AccountsView(window.runner, window.accounts)
+    reopened.load_preferred_profile()
+    await finish_save()
+    reopened._render(profiles)
+    restored = reopened.table.rows["Studio"].priority_button
+    assert restored.isChecked()
+    restored.click()
+    await finish_save()
+    assert not restored.isChecked()
+    assert await SettingsRepository().get(PREFERRED_PROFILE_KEY) == ""
+    reopened.deleteLater()
+
+
 async def test_visible_account_switches_share_pool_state_and_preserve_manual_switch(
     window, migrated_db, monkeypatch
 ):
@@ -2560,6 +2615,11 @@ def test_account_and_work_columns_fill_width_and_keep_manual_resize(window, app)
     )
     account_row = next(iter(accounts.table.rows.values()))
     overview_row = window.dashboard._account_rows[account_row.alias]
+    assert account_row.priority_button.isVisibleTo(window)
+    assert account_row._action_host.rect().contains(account_row.priority_button.geometry())
+    assert (
+        account_row.priority_button.geometry().bottom() < account_row._switch_btn.geometry().top()
+    )
     assert [
         cell.x()
         for cell in [account_row._identity, *account_row._usage_cells, account_row._status_host]

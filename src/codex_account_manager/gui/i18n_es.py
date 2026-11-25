@@ -17,6 +17,8 @@ ES = {
     "If the selected goal stays blocked for {minutes} minutes and Codex is idle, a 2-minute shutdown countdown starts.": "Si el objetivo seleccionado sigue bloqueado durante {minutes} minutos y Codex está inactivo, comenzará una cuenta regresiva de 2 minutos para apagar el equipo.",
     "Import auth.json": "Importar auth.json",
     "Include in automatic switching": "Incluir en el cambio automático",
+    "Prefer this account": "Dar prioridad a esta cuenta",
+    "Clear preferred account": "Quitar la prioridad de la cuenta",
     "Include {account} in automatic switching": "Incluir {account} en el cambio automático",
     "JSON files (*.json)": "Archivos JSON (*.json)",
     "Local time in HH:MM format. Separate multiple times with commas.": "Hora local en formato HH:MM. Separa las horas con comas.",
